@@ -1,0 +1,6 @@
+raw/**
+scores/**
+trust/**
+seed/**
+
+.env

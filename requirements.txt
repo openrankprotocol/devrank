@@ -1,0 +1,14 @@
+# Requirements for OSO GitHub Repository Downloader
+# Install with: pip install -r requirements.txt
+
+# Core OSO SDK
+pyoso>=0.1.0
+
+# Data manipulation and CSV handling
+pandas>=1.5.0
+
+# HTTP requests and API handling
+requests>=2.28.0
+
+# Environment variable loading
+python-dotenv>=0.19.0
