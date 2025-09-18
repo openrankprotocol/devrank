@@ -62,65 +62,23 @@ def load_config(config_path="config.toml"):
 
 
 def validate_config(config):
-    """Validate configuration and provide defaults"""
+    """Validate configuration"""
 
-    # Set defaults for missing sections
-    defaults = {
-        "general": {
-            "output_dir": "./raw",
-            "days_back": 0
-        },
-        "seed_repositories": {
-            "repos": [
-                "ethereum/go-ethereum",
-                "bitcoin/bitcoin",
-                "ethereum/solidity"
-            ]
-        },
-        "contributors": {
-            "min_commits": 5,
-            "max_contributors_per_repo": 50,
-            "max_core_contributors_for_extended_analysis": 20
-        },
-        "extended_repositories": {
-            "min_core_contributors": 2,
-            "max_extended_repos": 100,
-            "max_extended_repos_for_contributors": 30
-        },
-        "extended_contributors": {
-            "min_commits_extended": 3,
-            "max_extended_contributors": 200
-        },
-        "query_limits": {
-            "core_contributors_limit": 1000,
-            "extended_repos_limit": 200,
-            "extended_contributors_limit": 500
-        },
-        "filters": {
-            "exclude_bots": False,
-            "bot_keywords": ["bot", "dependabot", "mergify", "renovate", "github-actions"],
-            "start_date": "",
-            "end_date": ""
-        },
-        "output": {
-            "timestamp_format": "%Y%m%d_%H%M%S",
-            "file_prefix": "crypto",
-            "include_headers": True,
-            "include_timestamp_in_filename": True
-        }
-    }
+    # Required sections
+    required_sections = [
+        "general", "seed_organizations", "seed_repositories",
+        "contributors", "extended_repositories", "extended_contributors",
+        "query_limits", "filters", "output"
+    ]
 
-    # Apply defaults for missing keys
-    for section, section_defaults in defaults.items():
+    for section in required_sections:
         if section not in config:
-            config[section] = {}
-        for key, default_value in section_defaults.items():
-            if key not in config[section]:
-                config[section][key] = default_value
+            print(f"ERROR: Missing required section [{section}] in config.toml")
+            sys.exit(1)
 
-    # Validate seed repositories
-    if not config["seed_repositories"]["repos"]:
-        print("ERROR: No seed repositories configured!")
+    # Validate seed organizations
+    if not config["seed_organizations"]["orgs"]:
+        print("ERROR: No seed organizations configured in config.toml!")
         sys.exit(1)
 
     return config
@@ -174,7 +132,7 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
     config = validate_config(config)
 
     print(f"Starting CONFIGURABLE crypto ecosystem analysis...")
-    print(f"Seed repositories: {len(config['seed_repositories']['repos'])}")
+    print(f"Seed organizations: {len(config['seed_organizations']['orgs'])}")
     print(f"Min commits for core contributors: {config['contributors']['min_commits']}")
     print(f"Date range: {config['general']['days_back']} days back" if config['general']['days_back'] > 0 else "Date range: All time")
 
@@ -209,22 +167,112 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
     date_filter = build_date_filter(config)
     bot_filter = build_bot_filter(config)
 
-    # Step 1: Get seed repos and their top contributors
-    print("\nStep 1: Finding seed repos and core contributors...")
+    # Step 1: Discover seed repositories from organizations
+    print("\nStep 1: Discovering repositories from seed organizations...")
 
-    # Build repository filter
-    seed_repos = config["seed_repositories"]["repos"]
-    repo_filters = []
-    for repo in seed_repos:
-        if '/' in repo:
-            repo_filters.append(f"repository_name = '{repo}'")
-        else:
-            print(f"WARNING: Invalid repo format '{repo}', should be 'org/repo'")
+    seed_organizations = config["seed_organizations"]["orgs"]
+    seed_repos_data = []
 
-    if not repo_filters:
-        print("ERROR: No valid seed repositories found!")
+    for org in seed_organizations:
+        print(f"  Finding repositories in {org}...")
+        try:
+            # Build exclude patterns filter
+            exclude_conditions = []
+            for pattern in config["seed_repositories"]["exclude_patterns"]:
+                exclude_conditions.append(f"LOWER(artifact_name) NOT LIKE LOWER('%{pattern}%')")
+            exclude_filter = " AND " + " AND ".join(exclude_conditions) if exclude_conditions else ""
+
+            # Query to find all repositories in organization
+            org_repos_query = f"""
+            SELECT
+                artifact_id,
+                artifact_namespace,
+                artifact_name,
+                artifact_source_id
+            FROM artifacts_v1
+            WHERE artifact_source = 'GITHUB'
+            AND artifact_namespace = '{org}'
+            {exclude_filter}
+            ORDER BY artifact_name
+            LIMIT {config['query_limits']['seed_repos_per_org_limit']}
+            """
+
+            print(f"    Executing query for {org}...")
+            org_repos_df = client.to_pandas(org_repos_query)
+            print(f"    Query completed, found {len(org_repos_df)} rows")
+
+            if not org_repos_df.empty:
+                print(f"    Processing {len(org_repos_df)} repositories from {org}")
+
+                # Filter by commit count if configured
+                if config["seed_repositories"]["min_repo_commits"] > 0:
+                    print(f"    Filtering by minimum {config['seed_repositories']['min_repo_commits']} commits...")
+                    # Get commit counts for filtering
+                    repo_names = ["'" + f"{org}/{row['artifact_name']}" + "'" for _, row in org_repos_df.iterrows()]
+                    if repo_names:
+                        commit_count_query = f"""
+                        SELECT
+                            repository_name,
+                            COUNT(*) as commit_count
+                        FROM stg_github__commits
+                        WHERE repository_name IN ({', '.join(repo_names)})
+                        {date_filter}
+                        GROUP BY repository_name
+                        HAVING COUNT(*) >= {config['seed_repositories']['min_repo_commits']}
+                        ORDER BY COUNT(*) DESC
+                        """
+
+                        commit_counts_df = client.to_pandas(commit_count_query)
+                        print(f"    Commit filter returned {len(commit_counts_df)} repositories")
+
+                        if not commit_counts_df.empty:
+                            # Filter org_repos to only include repos with enough commits
+                            valid_repo_names = set(commit_counts_df['repository_name'].tolist())
+                            org_repos_df = org_repos_df[org_repos_df.apply(lambda row: f"{org}/{row['artifact_name']}" in valid_repo_names, axis=1)]
+                            print(f"    After commit filtering: {len(org_repos_df)} repositories")
+                        else:
+                            print(f"    No repositories met minimum commit threshold")
+                            org_repos_df = pd.DataFrame()  # Empty dataframe
+                else:
+                    print(f"    Skipping commit count filtering (min_repo_commits = 0)")
+
+                # Apply max repos per org limit
+                if config["seed_repositories"]["max_repos_per_org"] > 0:
+                    org_repos_df = org_repos_df.head(config["seed_repositories"]["max_repos_per_org"])
+
+                print(f"    Final count: {len(org_repos_df)} repositories")
+
+                # Add to seed repos list
+                for _, repo_row in org_repos_df.iterrows():
+                    seed_repos_data.append({
+                        'organization': repo_row['artifact_namespace'],
+                        'repository_name': repo_row['artifact_name'],
+                        'artifact_id': repo_row['artifact_id'],
+                        'full_name': f"{repo_row['artifact_namespace']}/{repo_row['artifact_name']}",
+                        'status': 'found'
+                    })
+            else:
+                print(f"    No repositories found for {org}")
+
+        except Exception as e:
+            print(f"    Error finding repositories for {org}: {e}")
+            import traceback
+            print(f"    Full error: {traceback.format_exc()}")
+            continue
+
+    if not seed_repos_data:
+        print("ERROR: No seed repositories found!")
         return {}
 
+    seed_repos_df = pd.DataFrame(seed_repos_data)
+    print(f"Total seed repositories discovered: {len(seed_repos_df)}")
+
+    # Step 2: Get core contributors for discovered repositories
+    print("\nStep 2: Finding core contributors...")
+
+    # Build repository filter from discovered repos
+    repo_names = seed_repos_df['full_name'].tolist()
+    repo_filters = [f"repository_name = '{repo}'" for repo in repo_names]
     repo_filter_str = " OR ".join(repo_filters)
 
     try:
@@ -260,8 +308,8 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
                 'contributor_handle': 'count',
                 'commit_count': 'sum'
             }).reset_index()
-            seed_repos_summary.columns = ['repository', 'contributor_count', 'total_commits']
-            seed_repos_summary[['organization', 'repository_name']] = seed_repos_summary['repository'].str.split('/', expand=True)
+            seed_repos_summary.columns = ['full_name', 'contributor_count', 'total_commits']
+            seed_repos_summary[['organization', 'repository_name']] = seed_repos_summary['full_name'].str.split('/', expand=True)
             seed_repos_summary['status'] = 'found'
 
             # Get top contributors summary (aggregate across all seed repos)
@@ -281,12 +329,12 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
             contributor_summary = pd.DataFrame()
 
     except Exception as e:
-        print(f"ERROR in Step 1: {e}")
+        print(f"ERROR in Step 2: {e}")
         seed_repos_summary = pd.DataFrame()
         contributor_summary = pd.DataFrame()
 
-    # Step 2: Find extended repositories
-    print("\nStep 2: Finding extended repositories...")
+    # Step 3: Find extended repositories
+    print("\nStep 3: Finding extended repositories...")
 
     extended_repos_df = pd.DataFrame()
 
@@ -294,11 +342,14 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
         try:
             # Take configured number of top contributors
             top_contributors = contributor_summary.head(config['contributors']['max_core_contributors_for_extended_analysis'])['contributor_handle'].tolist()
+            print(f"  Using top {len(top_contributors)} contributors for extended analysis")
+
             contributors_str = "', '".join([c.replace("'", "''") for c in top_contributors])
 
             # Build exclusion filter for seed repos
-            seed_repo_exclusions = "', '".join(seed_repos)
+            seed_repo_exclusions = "', '".join(repo_names)
 
+            print(f"  Querying for extended repositories...")
             extended_repos_query = f"""
             SELECT
                 repository_name,
@@ -320,7 +371,21 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
             LIMIT {config['extended_repositories']['max_extended_repos']}
             """
 
-            extended_repos_df = client.to_pandas(extended_repos_query)
+            try:
+                extended_repos_df = client.to_pandas(extended_repos_query)
+                print(f"  Extended repositories query completed")
+            except Exception as query_error:
+                print(f"  Query failed: {query_error}")
+                print(f"  This might be due to API timeout - trying with smaller limit...")
+
+                # Retry with smaller limit
+                smaller_limit = min(50, config['extended_repositories']['max_extended_repos'])
+                fallback_query = extended_repos_query.replace(
+                    f"LIMIT {config['extended_repositories']['max_extended_repos']}",
+                    f"LIMIT {smaller_limit}"
+                )
+                extended_repos_df = client.to_pandas(fallback_query)
+                print(f"  Fallback query completed with limit {smaller_limit}")
 
             if not extended_repos_df.empty:
                 # Split repository name
@@ -334,11 +399,13 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
                 print("✗ No extended repositories found")
 
         except Exception as e:
-            print(f"ERROR in Step 2: {e}")
+            print(f"ERROR in Step 3: {e}")
+            import traceback
+            print(f"Full error trace: {traceback.format_exc()}")
             extended_repos_df = pd.DataFrame()
 
-    # Step 3: Find extended contributors
-    print("\nStep 3: Finding extended contributors...")
+    # Step 4: Find extended contributors
+    print("\nStep 4: Finding extended contributors...")
 
     extended_contributors_df = pd.DataFrame()
 
@@ -346,8 +413,11 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
         try:
             # Take configured number of top extended repos
             top_extended_repos = extended_repos_df.head(config['extended_repositories']['max_extended_repos_for_contributors'])['repository_name'].tolist()
+            print(f"  Using top {len(top_extended_repos)} extended repositories for contributor analysis")
+
             repos_str = "', '".join([repo.replace("'", "''") for repo in top_extended_repos])
 
+            print(f"  Querying for extended contributors...")
             extended_contributors_query = f"""
             SELECT
                 actor_login as contributor_handle,
@@ -368,7 +438,24 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
             LIMIT {config['extended_contributors']['max_extended_contributors']}
             """
 
-            extended_contributors_df = client.to_pandas(extended_contributors_query)
+            try:
+                extended_contributors_df = client.to_pandas(extended_contributors_query)
+                print(f"  Extended contributors query completed")
+            except Exception as query_error:
+                print(f"  Query failed: {query_error}")
+                print(f"  Trying with smaller repo subset...")
+
+                # Retry with fewer repos
+                smaller_repo_set = top_extended_repos[:10]  # Take only first 10 repos
+                smaller_repos_str = "', '".join([repo.replace("'", "''") for repo in smaller_repo_set])
+
+                fallback_query = extended_contributors_query.replace(
+                    f"WHERE repository_name IN ('{repos_str}')",
+                    f"WHERE repository_name IN ('{smaller_repos_str}')"
+                )
+
+                extended_contributors_df = client.to_pandas(fallback_query)
+                print(f"  Fallback query completed with {len(smaller_repo_set)} repositories")
 
             if not extended_contributors_df.empty:
                 print(f"✓ Found {len(extended_contributors_df)} extended contributors")
@@ -376,7 +463,9 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
                 print("✗ No extended contributors found")
 
         except Exception as e:
-            print(f"ERROR in Step 3: {e}")
+            print(f"ERROR in Step 4: {e}")
+            import traceback
+            print(f"Full error trace: {traceback.format_exc()}")
             extended_contributors_df = pd.DataFrame()
 
     # Save results to CSV files
@@ -428,7 +517,8 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
     print(f"CRYPTO ECOSYSTEM ANALYSIS COMPLETE")
     print(f"="*60)
     print(f"Configuration: {config_path}")
-    print(f"Seed repositories: {len(seed_repos_summary)}")
+    print(f"Seed organizations: {len(config['seed_organizations']['orgs'])}")
+    print(f"Seed repositories discovered: {len(seed_repos_summary)}")
     print(f"Core contributors: {len(contributor_summary)}")
     print(f"Extended repositories: {len(extended_repos_df)}")
     print(f"Extended contributors: {len(extended_contributors_df)}")
@@ -437,6 +527,11 @@ def analyze_crypto_ecosystem(config_path="config.toml"):
         print(f"  - {file}")
 
     # Show sample data
+    if not seed_repos_summary.empty:
+        print(f"\nTop 5 Seed Repositories by Contributors:")
+        for i, (_, repo) in enumerate(seed_repos_summary.head(5).iterrows(), 1):
+            print(f"  {i}. {repo['organization']}/{repo['repository_name']} - {repo['contributor_count']} contributors, {repo['total_commits']} commits")
+
     if not contributor_summary.empty:
         print(f"\nTop 5 Core Contributors:")
         for i, (_, contrib) in enumerate(contributor_summary.head(5).iterrows(), 1):

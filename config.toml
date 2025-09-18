@@ -1,4 +1,4 @@
-# Crypto Ecosystem Analyzer Configuration
+# Crypto Ecosystem Analyzer Configuration - Organization-Based
 # This file controls all the parameters for the analysis
 
 [general]
@@ -7,64 +7,72 @@ output_dir = "./raw"
 
 # Date range for contributions (in days from now)
 # Set to 0 to include all historical data
-days_back = 730  # 0 = all time, 365 = last year, 730 = last 2 years
+days_back = 0  # 0 = all time, 365 = last year, 730 = last 2 years
 
-[seed_repositories]
-# List of seed repositories to analyze
-# Format: ["organization/repository", "organization/repository"]
-repos = [
-    "ethereum/go-ethereum",
-    "bitcoin/bitcoin",
-    "ethereum/solidity",
-    "cosmos/cosmos-sdk",
-    "ethereum/web3.py",
-    "paradigmxyz/revm",
-    "chainlink/chainlink",
-    "compound-finance/compound-protocol",
-    "Uniswap/v3-core",
-    "ethereum/py-evm",
-    "paradigmxyz/reth",
-    "foundry-rs/foundry",
-    "paritytech/polkadot-sdk",
-    "ethereum-optimism/optimism",
-    "ethereum-optimism/op-geth",
-    "OffchainLabs/prysm",
-    "flashbots/mev-boost",
-    "succinctlabs/sp1",
-    "risc0/risc0",
+[seed_organizations]
+# List of seed organizations to analyze
+# All repositories from these organizations will be included
+orgs = [
+    "ethereum",
+    "bitcoin",
+    "cosmos",
+    "paradigmxyz",
+    "compound-finance",
+    "chainlink",
+    "Uniswap",
+    "OffchainLabs",
+    "foundry-rs",
+    "paritytech",
 ]
+
+# Repository filtering within organizations
+[seed_repositories]
+# Minimum number of commits a repository must have to be included
+min_repo_commits = 2
+
+# Maximum number of repositories to include per organization (0 = no limit)
+max_repos_per_org = 1000
+
+# Exclude repositories that match these patterns (case-insensitive)
+exclude_patterns = []
+
+# Exclude forks from seed repositories
+exclude_forks = true
 
 [contributors]
 # Minimum number of commits a contributor must have to be considered "core"
-min_commits = 20
+min_commits = 5
 
 # Maximum number of top contributors to fetch per seed repository
-max_contributors_per_repo = 100
+max_contributors_per_repo = 1000
 
 # Maximum number of total core contributors to use for extended analysis
 # (to keep queries fast, we limit this)
-max_core_contributors_for_extended_analysis = 100
+max_core_contributors_for_extended_analysis = 200
 
 [extended_repositories]
 # Minimum number of core contributors a repo must have to be included
-min_core_contributors = 20
+min_core_contributors = 2
 
 # Maximum number of extended repositories to find
-max_extended_repos = 100
+max_extended_repos = 2000
 
 # Maximum number of extended repos to use for finding extended contributors
-max_extended_repos_for_contributors = 30
+max_extended_repos_for_contributors = 2000
 
 [extended_contributors]
 # Minimum commits in extended repos to be considered an extended contributor
-min_commits_extended = 20
+min_commits_extended = 3
 
 # Maximum number of extended contributors to fetch
-max_extended_contributors = 200
+max_extended_contributors = 100000
 
 [query_limits]
 # SQL query limits to prevent timeouts
 # Increase these if you want more comprehensive results (but slower queries)
+
+# Limit for seed repositories discovery per organization
+seed_repos_per_org_limit = 1000
 
 # Limit for core contributors query
 core_contributors_limit = 2000
@@ -73,18 +81,17 @@ core_contributors_limit = 2000
 extended_repos_limit = 2000
 
 # Limit for extended contributors query
-extended_contributors_limit = 500
+extended_contributors_limit = 100000
 
 [filters]
 # Repository filters
-exclude_forks = true
-exclude_archived = false
+exclude_archived = true
 
 # Contributor filters
 exclude_bots = true  # Set to true to exclude bot accounts
-bot_keywords = ["bot", "dependabot", "mergify", "renovate", "github-actions"]
+bot_keywords = ["bot", "dependabot", "mergify", "renovate", "github-actions", "semantic-release"]
 
-# Date filters
+# Date filters (overrides days_back if set)
 start_date = ""  # Format: "2020-01-01" or empty for no limit
 end_date = ""    # Format: "2024-12-31" or empty for no limit
 
