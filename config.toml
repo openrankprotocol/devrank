@@ -1,5 +1,6 @@
 # Crypto Ecosystem Analyzer Configuration - Organization-Based
 # This file controls all the parameters for the analysis
+# Updated for comprehensive OSO schema with reasonable performance limits
 
 [general]
 # Output directory for CSV files
@@ -18,9 +19,9 @@ orgs = [
     "cosmos",
     "paradigmxyz",
     "compound-finance",
-    "chainlink",
-    "Uniswap",
-    "OffchainLabs",
+    "smartcontractkit",
+    "uniswap",
+    "offchainlabs",
     "foundry-rs",
     "paritytech",
 ]
@@ -28,10 +29,10 @@ orgs = [
 # Repository filtering within organizations
 [seed_repositories]
 # Minimum number of commits a repository must have to be included
-min_repo_commits = 2
+min_repo_commits = 50
 
 # Maximum number of repositories to include per organization (0 = no limit)
-max_repos_per_org = 1000
+max_repos_per_org = 10
 
 # Exclude repositories that match these patterns (case-insensitive)
 exclude_patterns = []
@@ -41,47 +42,47 @@ exclude_forks = true
 
 [contributors]
 # Minimum number of commits a contributor must have to be considered "core"
-min_commits = 5
+min_commits = 10
 
 # Maximum number of top contributors to fetch per seed repository
-max_contributors_per_repo = 1000
+max_contributors_per_repo = 30
 
 # Maximum number of total core contributors to use for extended analysis
 # (to keep queries fast, we limit this)
-max_core_contributors_for_extended_analysis = 200
+max_core_contributors_for_extended_analysis = 15
 
 [extended_repositories]
 # Minimum number of core contributors a repo must have to be included
 min_core_contributors = 2
 
 # Maximum number of extended repositories to find
-max_extended_repos = 2000
+max_extended_repos = 50
 
 # Maximum number of extended repos to use for finding extended contributors
-max_extended_repos_for_contributors = 2000
+max_extended_repos_for_contributors = 20
 
 [extended_contributors]
 # Minimum commits in extended repos to be considered an extended contributor
 min_commits_extended = 3
 
 # Maximum number of extended contributors to fetch
-max_extended_contributors = 100000
+max_extended_contributors = 100
 
 [query_limits]
 # SQL query limits to prevent timeouts
 # Increase these if you want more comprehensive results (but slower queries)
 
 # Limit for seed repositories discovery per organization
-seed_repos_per_org_limit = 1000
+seed_repos_per_org_limit = 50
 
 # Limit for core contributors query
-core_contributors_limit = 2000
+core_contributors_limit = 500
 
 # Limit for extended repos query
-extended_repos_limit = 2000
+extended_repos_limit = 100
 
 # Limit for extended contributors query
-extended_contributors_limit = 100000
+extended_contributors_limit = 200
 
 [filters]
 # Repository filters
@@ -102,7 +103,7 @@ file_prefix = "crypto"
 
 # CSV output options
 include_headers = true
-include_timestamp_in_filename = true
+include_timestamp_in_filename = false
 
 # Additional output files
 save_summary_stats = true

@@ -3,4 +3,6 @@ scores/**
 trust/**
 seed/**
 
+__pycache__
+
 .env
