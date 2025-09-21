@@ -105,9 +105,6 @@ def discover_seed_repositories(config):
     Returns:
         list: List of repository identifiers in "org/repo" format
     """
-    print("\n" + "="*60)
-    print("STEP 1: DISCOVERING SEED REPOSITORIES")
-    print("="*60)
 
     # Get API key
     api_key = os.getenv('OSO_API_KEY')
@@ -159,11 +156,6 @@ def discover_seed_repositories(config):
             org_repos_df = client.to_pandas(org_repos_query)
 
             if not org_repos_df.empty:
-                # Apply max repos per org limit
-                max_repos = config.get("seed_repositories", {}).get("max_repos_per_org", 0)
-                if max_repos > 0:
-                    org_repos_df = org_repos_df.head(max_repos)
-
                 org_repos = org_repos_df['repository_name'].tolist()
                 all_seed_repos.extend(org_repos)
                 print(f"    Found {len(org_repos)} repositories")
@@ -174,7 +166,10 @@ def discover_seed_repositories(config):
             print(f"    Error finding repositories for {org}: {e}")
             continue
 
-    print(f"\n✓ Total seed repositories discovered: {len(all_seed_repos)}")
+    # Remove duplicates
+    all_seed_repos = list(set(all_seed_repos))
+
+    print(f"\n✓ Total seed repositories discovered: {len(all_seed_repos)} (after removing duplicates)")
 
     if not all_seed_repos:
         print("ERROR: No seed repositories found!")
@@ -186,10 +181,7 @@ def discover_seed_repositories(config):
 
     seed_repos_df = pd.DataFrame({
         'repository_name': all_seed_repos,
-        'step': 'seed_discovery',
-        'discovery_time': datetime.now().isoformat()
     })
-    seed_repos_df[['organization', 'repo_name']] = seed_repos_df['repository_name'].str.split('/', expand=True)
 
     seed_file = output_dir / "crypto_seed_repos.csv"
     seed_repos_df.to_csv(seed_file, index=False)
@@ -205,19 +197,11 @@ def find_core_contributors(seed_repos, config):
     Returns:
         list: List of core contributor handles
     """
-    print("\n" + "="*60)
-    print("STEP 2: FINDING CORE CONTRIBUTORS")
-    print("="*60)
-
     print(f"Finding contributors for {len(seed_repos)} seed repositories...")
 
     # Configure parameters from config.toml
     min_commits = config.get("contributors", {}).get("min_commits", 10)
     date_filter_days = config.get("general", {}).get("days_back", 0)
-
-    print(f"Configuration:")
-    print(f"  Minimum commits: {min_commits}")
-    print(f"  Date filter: {'All time' if date_filter_days == 0 else f'Last {date_filter_days} days'}")
 
     # Use repo_to_contributors module
     contributors_df = repo_to_contributors.get_contributors_by_repos(
@@ -230,8 +214,7 @@ def find_core_contributors(seed_repos, config):
         print("ERROR: No contributors found for seed repositories")
         return []
 
-    # Analyze and save contributors data
-    repo_to_contributors.analyze_contributors_data(contributors_df)
+    # Save contributors data
     saved_file = repo_to_contributors.save_contributors_data(contributors_df)
 
     # Get unique contributor handles, prioritizing top contributors
@@ -246,11 +229,6 @@ def find_core_contributors(seed_repos, config):
     top_contributors = contributor_summary.head(max_core_contributors)
     core_contributor_handles = top_contributors.index.tolist()
 
-    print(f"\n✓ Selected {len(core_contributor_handles)} core contributors for extended analysis")
-    print("Top 5 core contributors:")
-    for i, (contributor, data) in enumerate(top_contributors.head(5).iterrows(), 1):
-        print(f"  {i}. {contributor} - {data['total_commits']:,} commits across {data['repository_name']} repos")
-
     return core_contributor_handles
 
 
@@ -261,9 +239,6 @@ def find_extended_ecosystem(core_contributors, config):
     Returns:
         tuple: (extended_repos_list, extended_organizations_list)
     """
-    print("\n" + "="*60)
-    print("STEP 3: FINDING EXTENDED ECOSYSTEM")
-    print("="*60)
 
     print(f"Finding repositories for {len(core_contributors)} core contributors...")
 
@@ -271,11 +246,6 @@ def find_extended_ecosystem(core_contributors, config):
     min_commits = config.get("extended_repositories", {}).get("min_core_contributors", 2)
     include_org_repos = True  # Always include organization repos
     date_filter_days = config.get("general", {}).get("days_back", 0)
-
-    print(f"Configuration:")
-    print(f"  Minimum commits: {min_commits}")
-    print(f"  Include organization repos: {include_org_repos}")
-    print(f"  Date filter: {'All time' if date_filter_days == 0 else f'Last {date_filter_days} days'}")
 
     # Use contributors_to_repos module
     repos_data = contributors_to_repos.get_repos_by_contributors(
@@ -292,8 +262,7 @@ def find_extended_ecosystem(core_contributors, config):
         print("ERROR: No extended repositories found")
         return [], []
 
-    # Analyze and save repos data
-    contributors_to_repos.analyze_repos_data(repos_data)
+    # Save repos data
     saved_files = contributors_to_repos.save_repos_data(repos_data)
 
     # Extract extended repositories list
@@ -329,10 +298,6 @@ def find_extended_ecosystem(core_contributors, config):
     extended_repos = list(set(extended_repos))
     extended_organizations = list(set(extended_organizations))
 
-    print(f"\n✓ Extended ecosystem discovered:")
-    print(f"  Extended repositories: {len(extended_repos)}")
-    print(f"  Extended organizations: {len(extended_organizations)}")
-
     return extended_repos, extended_organizations
 
 
@@ -343,10 +308,6 @@ def find_extended_contributors(extended_repos, config):
     Returns:
         pd.DataFrame: Extended contributors data
     """
-    print("\n" + "="*60)
-    print("STEP 4: FINDING EXTENDED CONTRIBUTORS")
-    print("="*60)
-
     if not extended_repos:
         print("No extended repositories to analyze")
         return pd.DataFrame()
@@ -355,18 +316,10 @@ def find_extended_contributors(extended_repos, config):
 
     # Limit repositories to avoid overwhelming the system
     max_repos_for_contributors = config.get("extended_repositories", {}).get("max_extended_repos_for_contributors", 100)
-    if len(extended_repos) > max_repos_for_contributors:
-        print(f"Limiting to {max_repos_for_contributors} repositories for contributor analysis")
-        extended_repos = extended_repos[:max_repos_for_contributors]
 
     # Configure parameters from config.toml
     min_commits = config.get("extended_contributors", {}).get("min_commits_extended", 3)
     date_filter_days = config.get("general", {}).get("days_back", 0)
-
-    print(f"Configuration:")
-    print(f"  Repositories to analyze: {len(extended_repos)}")
-    print(f"  Minimum commits: {min_commits}")
-    print(f"  Date filter: {'All time' if date_filter_days == 0 else f'Last {date_filter_days} days'}")
 
     # Use repo_to_contributors module
     extended_contributors_df = repo_to_contributors.get_contributors_by_repos(
@@ -398,93 +351,20 @@ def find_extended_contributors(extended_repos, config):
     # Save extended contributors data with custom filename
     output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
     extended_contrib_file = output_dir / "crypto_extended_contributors.csv"
-    filtered_extended_contributors.to_csv(extended_contrib_file, index=False)
-
-    print(f"\n✓ Extended contributors analysis complete:")
-    print(f"  Total contributor records: {len(filtered_extended_contributors):,}")
-    print(f"  Unique contributors: {len(top_contributor_handles):,}")
-    print(f"  Unique repositories: {filtered_extended_contributors['repository_name'].nunique():,}")
-    print(f"✓ Saved: {extended_contrib_file}")
-
-    # Show top extended contributors
-    print("\nTop 5 extended contributors:")
-    for i, (contributor, data) in enumerate(contributor_summary.head(5).iterrows(), 1):
-        print(f"  {i}. {contributor} - {data['total_commits']:,} commits across {data['repository_name']} repos")
+    # Only save specified columns
+    filtered_for_save = filtered_extended_contributors[['repository_name', 'contributor_handle']]
+    filtered_for_save.to_csv(extended_contrib_file, index=False)
 
     return filtered_extended_contributors
-
-
-def generate_final_summary(config, seed_repos, core_contributors, extended_repos, extended_contributors_df):
-    """Generate final summary and save consolidated results."""
-
-    print("\n" + "="*80)
-    print("CRYPTO ECOSYSTEM ANALYSIS COMPLETE")
-    print("="*80)
-
-    # Summary statistics
-    print(f"FINAL SUMMARY:")
-    print(f"  Seed organizations: {len(config['seed_organizations']['orgs'])}")
-    print(f"  Seed repositories: {len(seed_repos)}")
-    print(f"  Core contributors: {len(core_contributors)}")
-    print(f"  Extended repositories: {len(extended_repos)}")
-    print(f"  Extended contributors: {extended_contributors_df['contributor_handle'].nunique() if not extended_contributors_df.empty else 0}")
-
-    # List all generated files
-    output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
-    generated_files = []
-
-    for file_pattern in ["crypto_seed_repos.csv", "repo_contributors.csv", "contributor_repos.csv",
-                        "organization_repos.csv", "crypto_extended_contributors.csv"]:
-        file_path = output_dir / file_pattern
-        if file_path.exists():
-            generated_files.append(str(file_path))
-
-    print(f"\nGenerated files ({len(generated_files)}):")
-    for file_path in generated_files:
-        try:
-            file_size = os.path.getsize(file_path) / 1024 / 1024  # MB
-            print(f"  📄 {file_path} ({file_size:.1f} MB)")
-        except:
-            print(f"  📄 {file_path}")
-
-    # Create a final summary file
-    summary_data = {
-        'analysis_timestamp': datetime.now().isoformat(),
-        'config_file': 'config.toml',
-        'seed_organizations_count': len(config['seed_organizations']['orgs']),
-        'seed_repositories_count': len(seed_repos),
-        'core_contributors_count': len(core_contributors),
-        'extended_repositories_count': len(extended_repos),
-        'extended_contributors_count': extended_contributors_df['contributor_handle'].nunique() if not extended_contributors_df.empty else 0,
-        'total_files_generated': len(generated_files)
-    }
-
-    summary_df = pd.DataFrame([summary_data])
-    summary_file = output_dir / "crypto_analysis_summary.csv"
-    summary_df.to_csv(summary_file, index=False)
-    print(f"\n✓ Analysis summary saved: {summary_file}")
-
-    return generated_files
-
 
 def main(config_path="config.toml"):
     """Main orchestration function."""
 
-    print("Crypto Ecosystem Contributor Network Analyzer - Pipeline Version")
-    print("="*80)
-    print("Multi-step pipeline using specialized analysis modules")
-    print(f"Configuration: {config_path}")
-
     # Load and validate configuration
     config = load_config(config_path)
     config = validate_config(config)
-
-    print(f"\nPipeline Configuration:")
-    print(f"  Seed organizations: {len(config['seed_organizations']['orgs'])}")
-    print(f"  Output directory: {config.get('general', {}).get('output_dir', './raw')}")
     date_filter_days = config.get('general', {}).get('days_back', 0)
     date_filter_text = 'All time' if date_filter_days == 0 else f'{date_filter_days} days back'
-    print(f"  Date filter: {date_filter_text}")
 
     try:
         # Step 1: Discover seed repositories from organizations
@@ -498,14 +378,6 @@ def main(config_path="config.toml"):
 
         # Step 4: Find extended contributors using repo_to_contributors
         extended_contributors_df = find_extended_contributors(extended_repos, config)
-
-        # Generate final summary
-        generated_files = generate_final_summary(
-            config, seed_repos, core_contributors, extended_repos, extended_contributors_df
-        )
-
-        print(f"\n🎉 SUCCESS! Crypto ecosystem analysis pipeline completed successfully!")
-        print(f"📊 Generated {len(generated_files)} data files ready for analysis")
 
     except KeyboardInterrupt:
         print("\n\n⏹️ Analysis cancelled by user")

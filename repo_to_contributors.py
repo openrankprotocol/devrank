@@ -77,60 +77,72 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
         cutoff_date = datetime.now() - timedelta(days=date_filter_days)
         date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
 
-    # Build repository conditions
-    repo_conditions = []
-    for repo_id in repo_identifiers:
-        if '/' in repo_id:
-            org, repo = repo_id.split('/', 1)
-            repo_conditions.append(f"(p.artifact_namespace = '{org}' AND p.artifact_name = '{repo}')")
-        else:
-            print(f"WARNING: Invalid repo format '{repo_id}', should be 'org/repo'")
+    # Process repositories in batches to avoid query compiler limit
+    batch_size = 100
+    all_contributors = []
 
-    if not repo_conditions:
-        print("ERROR: No valid repository identifiers provided!")
-        return pd.DataFrame()
+    for i in range(0, len(repo_identifiers), batch_size):
+        batch_repos = repo_identifiers[i:i+batch_size]
+        print(f"  Processing batch {i//batch_size + 1}/{(len(repo_identifiers)-1)//batch_size + 1} ({len(batch_repos)} repositories)...")
 
-    repo_condition_str = " OR ".join(repo_conditions)
+        # Build repository conditions for this batch
+        repo_conditions = []
+        for repo_id in batch_repos:
+            if '/' in repo_id:
+                org, repo = repo_id.split('/', 1)
+                repo_conditions.append(f"(p.artifact_namespace = '{org}' AND p.artifact_name = '{repo}')")
+            else:
+                print(f"WARNING: Invalid repo format '{repo_id}', should be 'org/repo'")
 
-    try:
-        contributors_query = f"""
-        SELECT
-            CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name,
-            u.artifact_name as contributor_handle,
-            u.artifact_id as contributor_id,
-            SUM(e.amount) as total_commits,
-            COUNT(DISTINCT e.bucket_day) as active_days,
-            MIN(e.bucket_day) as first_commit,
-            MAX(e.bucket_day) as last_commit
-        FROM int_events_daily__github AS e
-        JOIN int_github_users AS u
-          ON e.from_artifact_id = u.artifact_id
-        JOIN artifacts_by_project_v1 AS p
-          ON e.to_artifact_id = p.artifact_id
-          AND p.artifact_source = 'GITHUB'
-        WHERE
-          e.event_type = 'COMMIT_CODE'
-          AND ({repo_condition_str})
-          AND u.artifact_name IS NOT NULL
-          AND u.artifact_name != ''
-          {date_filter}
-        GROUP BY p.artifact_namespace, p.artifact_name, u.artifact_name, u.artifact_id
-        HAVING SUM(e.amount) >= {min_commits}
-        ORDER BY p.artifact_namespace, p.artifact_name, SUM(e.amount) DESC
-        """
+        if not repo_conditions:
+            continue
 
-        print("Executing contributors query...")
-        contributors_df = client.to_pandas(contributors_query)
+        repo_condition_str = " OR ".join(repo_conditions)
 
-        if not contributors_df.empty:
-            print(f"✓ Found {len(contributors_df)} contributor records")
-            return contributors_df
-        else:
-            print("✗ No contributors found for the specified repositories")
-            return pd.DataFrame()
+        try:
+            contributors_query = f"""
+            SELECT
+                CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name,
+                u.artifact_name as contributor_handle,
+                u.artifact_id as contributor_id,
+                SUM(e.amount) as total_commits,
+                COUNT(DISTINCT e.bucket_day) as active_days,
+                MIN(e.bucket_day) as first_commit,
+                MAX(e.bucket_day) as last_commit
+            FROM int_events_daily__github AS e
+            JOIN int_github_users AS u
+              ON e.from_artifact_id = u.artifact_id
+            JOIN artifacts_by_project_v1 AS p
+              ON e.to_artifact_id = p.artifact_id
+              AND p.artifact_source = 'GITHUB'
+            WHERE
+              e.event_type = 'COMMIT_CODE'
+              AND ({repo_condition_str})
+              AND u.artifact_name IS NOT NULL
+              AND u.artifact_name != ''
+              {date_filter}
+            GROUP BY p.artifact_namespace, p.artifact_name, u.artifact_name, u.artifact_id
+            HAVING SUM(e.amount) >= {min_commits}
+            ORDER BY p.artifact_namespace, p.artifact_name, SUM(e.amount) DESC
+            """
 
-    except Exception as e:
-        print(f"ERROR: Query failed: {e}")
+            batch_contributors_df = client.to_pandas(contributors_query)
+
+            if not batch_contributors_df.empty:
+                all_contributors.append(batch_contributors_df)
+                print(f"    Found {len(batch_contributors_df)} contributor records in this batch")
+
+        except Exception as e:
+            print(f"    ERROR: Batch query failed: {str(e)}")
+            continue
+
+    # Combine all batches
+    if all_contributors:
+        contributors_df = pd.concat(all_contributors, ignore_index=True)
+        print(f"✓ Found {len(contributors_df)} contributor records")
+        return contributors_df
+    else:
+        print("✗ No contributors found for the specified repositories")
         return pd.DataFrame()
 
 
@@ -147,114 +159,8 @@ def save_contributors_data(contributors_df, output_dir="./raw"):
 
     # Save to CSV (always overwrite, no timestamp)
     csv_file = output_path / "repo_contributors.csv"
-    contributors_df.to_csv(csv_file, index=False)
-
-    print(f"✓ Saved contributors data: {csv_file}")
-    print(f"  Total records: {len(contributors_df)}")
-    print(f"  Unique contributors: {contributors_df['contributor_handle'].nunique()}")
-    print(f"  Unique repositories: {contributors_df['repository_name'].nunique()}")
+    # Only save specified columns
+    filtered_df = contributors_df[['repository_name', 'contributor_handle']]
+    filtered_df.to_csv(csv_file, index=False)
 
     return str(csv_file)
-
-
-def analyze_contributors_data(contributors_df):
-    """Analyze and display contributors data."""
-
-    if contributors_df.empty:
-        print("No data to analyze")
-        return
-
-    print(f"\n" + "="*60)
-    print(f"CONTRIBUTORS ANALYSIS")
-    print(f"="*60)
-
-    # Overall stats
-    total_records = len(contributors_df)
-    unique_contributors = contributors_df['contributor_handle'].nunique()
-    unique_repos = contributors_df['repository_name'].nunique()
-    total_commits = contributors_df['total_commits'].sum()
-
-    print(f"Total contributor records: {total_records:,}")
-    print(f"Unique contributors: {unique_contributors:,}")
-    print(f"Unique repositories: {unique_repos:,}")
-    print(f"Total commits: {total_commits:,}")
-
-    # Top contributors across all repos
-    top_contributors = contributors_df.groupby('contributor_handle').agg({
-        'total_commits': 'sum',
-        'repository_name': 'nunique',
-        'active_days': 'sum'
-    }).sort_values('total_commits', ascending=False).head(10)
-
-    print(f"\nTop 10 Contributors (by total commits):")
-    for i, (contributor, data) in enumerate(top_contributors.iterrows(), 1):
-        print(f"  {i:2d}. {contributor} - {data['total_commits']:,} commits across {data['repository_name']} repos")
-
-    # Repository stats
-    repo_stats = contributors_df.groupby('repository_name').agg({
-        'contributor_handle': 'nunique',
-        'total_commits': 'sum'
-    }).sort_values('contributor_handle', ascending=False).head(10)
-
-    print(f"\nTop 10 Repositories (by contributor count):")
-    for i, (repo, data) in enumerate(repo_stats.iterrows(), 1):
-        print(f"  {i:2d}. {repo} - {data['contributor_handle']} contributors, {data['total_commits']:,} commits")
-
-
-def main():
-    """Main function with example usage."""
-
-    print("Repository to Contributors Mapper")
-    print("="*50)
-
-    # Example repository identifiers - modify these as needed
-    example_repos = [
-        "ethereum/go-ethereum",
-        "bitcoin/bitcoin",
-        "ethereum/solidity",
-        "cosmos/cosmos-sdk",
-        "paradigmxyz/reth"
-    ]
-
-    print(f"Example: Finding contributors for {len(example_repos)} repositories")
-    print("Repositories:")
-    for repo in example_repos:
-        print(f"  - {repo}")
-
-    # Configuration
-    min_commits = 5  # Minimum commits to be considered a contributor
-    date_filter_days = 0  # 0 = all time, 365 = last year, etc.
-
-    print(f"\nConfiguration:")
-    print(f"  Minimum commits: {min_commits}")
-    print(f"  Date filter: {'All time' if date_filter_days == 0 else f'Last {date_filter_days} days'}")
-
-    # Find contributors
-    contributors_df = get_contributors_by_repos(
-        repo_identifiers=example_repos,
-        min_commits=min_commits,
-        date_filter_days=date_filter_days
-    )
-
-    if not contributors_df.empty:
-        # Analyze data
-        analyze_contributors_data(contributors_df)
-
-        # Save data
-        saved_file = save_contributors_data(contributors_df)
-
-        print(f"\n✅ Process completed successfully!")
-        print(f"Data saved to: {saved_file}")
-    else:
-        print("❌ No contributors data found")
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\nCancelled by user")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Failed: {e}")
-        sys.exit(1)

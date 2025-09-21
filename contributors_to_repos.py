@@ -81,7 +81,6 @@ def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_or
 
     try:
         # Step 1: Find repositories that contributors have directly worked on
-        print("Step 1: Finding repositories contributors have worked on...")
 
         contributed_repos_query = f"""
         SELECT
@@ -128,8 +127,6 @@ def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_or
         organization_repos_df = pd.DataFrame()
 
         if include_org_repos and organizations:
-            print("Step 2: Finding all repositories in these organizations...")
-
             # Build organization conditions
             org_conditions = []
             for org in organizations:
@@ -185,144 +182,17 @@ def save_repos_data(repos_data, output_dir="./raw"):
     # Save contributed repositories
     if not contributed_repos_df.empty:
         contrib_file = output_path / "contributor_repos.csv"
-        contributed_repos_df.to_csv(contrib_file, index=False)
+        # Only save specified columns
+        filtered_df = contributed_repos_df[['organization', 'repo_name']]
+        filtered_df.to_csv(contrib_file, index=False)
         saved_files.append(str(contrib_file))
-        print(f"✓ Saved contributed repos: {contrib_file}")
-        print(f"  Records: {len(contributed_repos_df)}")
 
     # Save organization repositories
     if not organization_repos_df.empty:
         org_file = output_path / "organization_repos.csv"
-        organization_repos_df.to_csv(org_file, index=False)
+        # Only save specified columns
+        filtered_org_df = organization_repos_df[['organization', 'repo_name']]
+        filtered_org_df.to_csv(org_file, index=False)
         saved_files.append(str(org_file))
-        print(f"✓ Saved organization repos: {org_file}")
-        print(f"  Records: {len(organization_repos_df)}")
 
     return saved_files
-
-
-def analyze_repos_data(repos_data):
-    """Analyze and display repositories data."""
-
-    contributed_repos_df = repos_data['contributed_repos']
-    organization_repos_df = repos_data['organization_repos']
-
-    print(f"\n" + "="*60)
-    print(f"REPOSITORIES ANALYSIS")
-    print(f"="*60)
-
-    if not contributed_repos_df.empty:
-        # Contributed repositories stats
-        total_contrib_records = len(contributed_repos_df)
-        unique_contrib_repos = contributed_repos_df['repository_name'].nunique()
-        unique_contributors = contributed_repos_df['contributor_handle'].nunique()
-        total_commits = contributed_repos_df['total_commits'].sum()
-
-        print(f"DIRECTLY CONTRIBUTED REPOSITORIES:")
-        print(f"  Total contribution records: {total_contrib_records:,}")
-        print(f"  Unique repositories: {unique_contrib_repos:,}")
-        print(f"  Unique contributors: {unique_contributors:,}")
-        print(f"  Total commits: {total_commits:,}")
-
-        # Top repositories by commits
-        top_repos = contributed_repos_df.groupby('repository_name').agg({
-            'total_commits': 'sum',
-            'contributor_handle': 'nunique'
-        }).sort_values('total_commits', ascending=False).head(10)
-
-        print(f"\n  Top 10 Repositories (by commits):")
-        for i, (repo, data) in enumerate(top_repos.iterrows(), 1):
-            print(f"    {i:2d}. {repo} - {data['total_commits']:,} commits, {data['contributor_handle']} contributors")
-
-        # Top contributors
-        top_contributors = contributed_repos_df.groupby('contributor_handle').agg({
-            'total_commits': 'sum',
-            'repository_name': 'nunique'
-        }).sort_values('total_commits', ascending=False).head(10)
-
-        print(f"\n  Top 10 Contributors (by commits):")
-        for i, (contributor, data) in enumerate(top_contributors.iterrows(), 1):
-            print(f"    {i:2d}. {contributor} - {data['total_commits']:,} commits across {data['repository_name']} repos")
-
-    if not organization_repos_df.empty:
-        # Organization repositories stats
-        total_org_repos = len(organization_repos_df)
-        unique_orgs = organization_repos_df['organization'].nunique()
-
-        print(f"\nORGANIZATION REPOSITORIES:")
-        print(f"  Total repositories: {total_org_repos:,}")
-        print(f"  Unique organizations: {unique_orgs:,}")
-
-        # Repositories by organization
-        org_counts = organization_repos_df['organization'].value_counts().head(10)
-
-        print(f"\n  Top 10 Organizations (by repository count):")
-        for i, (org, count) in enumerate(org_counts.items(), 1):
-            print(f"    {i:2d}. {org} - {count} repositories")
-
-
-def main():
-    """Main function with example usage."""
-
-    print("Contributors to Repositories Mapper")
-    print("="*50)
-
-    # Example contributor identifiers - modify these as needed
-    example_contributors = [
-        "vitalik",
-        "gakonst",
-        "mattsse",
-        "chriseth",
-        "fjl"
-    ]
-
-    print(f"Example: Finding repositories for {len(example_contributors)} contributors")
-    print("Contributors:")
-    for contributor in example_contributors:
-        print(f"  - {contributor}")
-
-    # Configuration
-    min_commits = 3  # Minimum commits to be considered a contribution
-    include_org_repos = True  # Include all repos from same organizations
-    date_filter_days = 0  # 0 = all time, 365 = last year, etc.
-
-    print(f"\nConfiguration:")
-    print(f"  Minimum commits: {min_commits}")
-    print(f"  Include organization repos: {include_org_repos}")
-    print(f"  Date filter: {'All time' if date_filter_days == 0 else f'Last {date_filter_days} days'}")
-
-    # Find repositories
-    repos_data = get_repos_by_contributors(
-        contributor_identifiers=example_contributors,
-        min_commits=min_commits,
-        include_org_repos=include_org_repos,
-        date_filter_days=date_filter_days
-    )
-
-    contributed_repos = repos_data['contributed_repos']
-    organization_repos = repos_data['organization_repos']
-
-    if not contributed_repos.empty or not organization_repos.empty:
-        # Analyze data
-        analyze_repos_data(repos_data)
-
-        # Save data
-        saved_files = save_repos_data(repos_data)
-
-        print(f"\n✅ Process completed successfully!")
-        print(f"Files saved:")
-        for file_path in saved_files:
-            print(f"  - {file_path}")
-    else:
-        print("❌ No repositories data found")
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\nCancelled by user")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Failed: {e}")
-        sys.exit(1)
