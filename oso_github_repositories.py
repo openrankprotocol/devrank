@@ -401,36 +401,56 @@ def find_extended_repos_by_stars(core_contributors, config, degree=1):
         unique_orgs = repos_df['org_name'].unique()
         print(f"✓ Identified {len(unique_orgs)} unique organizations/users")
 
-        # For each org, get top 10 repos by stars
+        # Process organizations in batches for faster queries
         extended_repos = []
+        batch_size = 500
 
-        for org in unique_orgs:
+        for batch_start in range(0, len(unique_orgs), batch_size):
+            batch_orgs = unique_orgs[batch_start:batch_start + batch_size]
+            print(f"  Processing batch {batch_start // batch_size + 1}/{(len(unique_orgs) - 1) // batch_size + 1} ({len(batch_orgs)} organizations)...")
+
             try:
+                # Build org conditions for batch
+                org_conditions = []
+                for org in batch_orgs:
+                    org_conditions.append(f"p.artifact_namespace = '{org.replace(chr(39), chr(39)+chr(39))}'")
+
+                org_condition_str = " OR ".join(org_conditions)
+
                 stars_query = f"""
-                SELECT
-                    p.artifact_namespace as org_name,
-                    p.artifact_name as repo_name,
-                    CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name,
-                    SUM(e.amount) as total_stars
-                FROM int_events_daily__github AS e
-                JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
-                WHERE p.artifact_namespace = '{org.replace(chr(39), chr(39)+chr(39))}'
-                  AND e.event_type = 'STARRED'
-                  AND p.artifact_source = 'GITHUB'
-                GROUP BY p.artifact_namespace, p.artifact_name
-                ORDER BY total_stars DESC
-                LIMIT 15
+                WITH ranked_repos AS (
+                    SELECT
+                        p.artifact_namespace as org_name,
+                        p.artifact_name as repo_name,
+                        CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name,
+                        SUM(e.amount) as total_stars,
+                        ROW_NUMBER() OVER (PARTITION BY p.artifact_namespace ORDER BY SUM(e.amount) DESC) as rn
+                    FROM int_events_daily__github AS e
+                    JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
+                    WHERE ({org_condition_str})
+                      AND e.event_type = 'STARRED'
+                      AND p.artifact_source = 'GITHUB'
+                    GROUP BY p.artifact_namespace, p.artifact_name
+                )
+                SELECT org_name, repo_name, repository_name, total_stars
+                FROM ranked_repos
+                WHERE rn <= 15
+                ORDER BY org_name, total_stars DESC
                 """
 
-                org_stars_df = client.to_pandas(stars_query)
+                batch_stars_df = client.to_pandas(stars_query)
 
-                if not org_stars_df.empty:
-                    org_repos = org_stars_df['repository_name'].tolist()
-                    extended_repos.extend(org_repos)
-                    print(f"  {org}: Found {len(org_repos)} top starred repos")
+                if not batch_stars_df.empty:
+                    batch_repos = batch_stars_df['repository_name'].tolist()
+                    extended_repos.extend(batch_repos)
+
+                    # Show summary by org
+                    org_counts = batch_stars_df.groupby('org_name').size()
+                    for org, count in org_counts.items():
+                        print(f"    {org}: Found {count} top starred repos")
 
             except Exception as e:
-                print(f"  {org}: Error getting starred repos - {e}")
+                print(f"    Error getting starred repos for batch: {e}")
                 continue
 
         extended_repos = list(set(extended_repos))  # Remove duplicates
