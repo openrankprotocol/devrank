@@ -53,42 +53,29 @@ output_dir = "./raw"
 # Set to 0 to include all historical data
 days_back = 0  # 0 = all time, 365 = last year, 730 = last 2 years
 
-[seed_repositories]
-# List of seed repositories to analyze
-repos = [
-    "ethereum/go-ethereum",
-    "bitcoin/bitcoin",
-    "ethereum/solidity",
-    "cosmos/cosmos-sdk",
-    "ethereum/web3.py",
+# List of seed organizations to analyze
+seed_orgs = [
+    "ethereum",
+    "bitcoin",
+    "cosmos",
+    "paradigmxyz",
+    "compound-finance",
+    "smartcontractkit",
+    "uniswap",
+    "offchainlabs",
+    "foundry-rs",
+    "paritytech"
 ]
 
-[contributors]
-# Minimum number of commits a contributor must have to be considered "core"
+[analysis]
+# Minimum commits threshold for all analysis (repositories, core contributors, extended contributors)
 min_commits = 5
 
-# Maximum number of top contributors to fetch per seed repository
-max_contributors_per_repo = 50
+# Repository filtering
+max_repos_per_org = 200
 
-# Maximum number of total core contributors to use for extended analysis
-max_core_contributors_for_extended_analysis = 20
-
-[extended_repositories]
-# Minimum number of core contributors a repo must have to be included
+# Minimum core contributors threshold for all analysis (seed repos, extended repos, all phases)
 min_core_contributors = 2
-
-# Maximum number of extended repositories to find
-max_extended_repos = 100
-
-# Maximum number of extended repos to use for finding extended contributors
-max_extended_repos_for_contributors = 30
-
-[extended_contributors]
-# Minimum commits in extended repos to be considered an extended contributor
-min_commits_extended = 3
-
-# Maximum number of extended contributors to fetch
-max_extended_contributors = 200
 ```
 
 ### Advanced Filters
@@ -115,16 +102,7 @@ include_headers = true
 include_timestamp_in_filename = true
 ```
 
-### Performance Tuning
 
-```toml
-[query_limits]
-# SQL query limits to prevent timeouts
-# Increase these for more comprehensive results (but slower queries)
-core_contributors_limit = 1000
-extended_repos_limit = 200
-extended_contributors_limit = 500
-```
 
 ## 🔗 Graph Builder (Trust Networks)
 
@@ -138,7 +116,7 @@ The `generate_trust.py` script processes your analysis results to create weighte
 2. **Queries OSO Database** - Gets detailed GitHub activity data for user-repository pairs
 3. **Calculates Trust Scores** - Weights different activities:
    - **Commits**: 5 points (user → repo), 3 points (repo → user)
-   - **Pull Requests Opened**: 20 points (user → repo), 5 points (repo → user)  
+   - **Pull Requests Opened**: 20 points (user → repo), 5 points (repo → user)
    - **Pull Requests Merged**: 10 points (user → repo), 1 point (repo → user)
    - **Issues Opened**: 10 points (user → repo)
    - **Stars**: 5 points (user → repo)
@@ -219,17 +197,16 @@ marbar3778,11,6758
 
 ### DeFi Focused Analysis
 ```toml
-[seed_repositories]
-repos = [
-    "Uniswap/v3-core",
-    "compound-finance/compound-protocol",
-    "makerdao/dss",
-    "aave/protocol-v2"
+[general]
+seed_orgs = [
+    "Uniswap",
+    "compound-finance",
+    "makerdao",
+    "aave"
 ]
 
-[contributors]
+[analysis]
 min_commits = 10
-max_core_contributors_for_extended_analysis = 15
 
 [filters]
 exclude_bots = true
@@ -238,26 +215,26 @@ start_date = "2020-01-01"  # DeFi boom period
 
 ### Layer 2 Ecosystem
 ```toml
-[seed_repositories]
-repos = [
-    "ethereum-optimism/optimism",
-    "0xPolygonMatic/bor",
-    "matter-labs/zksync",
-    "starkware-libs/cairo-lang"
+[general]
+seed_orgs = [
+    "ethereum-optimism",
+    "0xPolygonMatic",
+    "matter-labs",
+    "starkware-libs"
 ]
 
-[contributors]
+[analysis]
 min_commits = 3  # Lower threshold for newer projects
 ```
 
 ### Bitcoin Ecosystem
 ```toml
-[seed_repositories]
-repos = [
-    "bitcoin/bitcoin",
-    "lightninglabs/lnd",
-    "ElementsProject/elements",
-    "BlockstreamResearch/secp256k1-zkp"
+[general]
+seed_orgs = [
+    "bitcoin",
+    "lightninglabs",
+    "ElementsProject",
+    "BlockstreamResearch"
 ]
 
 [general]
@@ -287,7 +264,7 @@ The tool reveals:
 1. **Start Small** - Begin with 3-5 seed repos and adjust limits
 2. **Use Date Filters** - Limit analysis to recent periods for faster queries
 3. **Enable Bot Filtering** - Exclude automated contributions for cleaner results
-4. **Tune Query Limits** - Increase gradually based on your needs vs. speed requirements
+4. **Adjust Repository Limits** - Use `max_repos_per_org` to balance thoroughness vs. speed
 5. **Custom Output Directories** - Organize results by analysis type or date
 
 ## 🚨 Limitations
@@ -306,7 +283,7 @@ The tool reveals:
 - Verify repos exist in OSO database
 
 **"Query timeout or error"**
-- Reduce query limits in config
+- Reduce repository limits in config (e.g., `max_repos_per_org`)
 - Add date filters to limit scope
 - Try smaller batches of seed repositories
 

@@ -82,8 +82,7 @@ def load_config(config_path="config.toml"):
 def validate_config(config):
     """Validate configuration"""
     required_sections = [
-        "general", "seed_organizations", "seed_repositories",
-        "contributors", "extended_repositories", "extended_contributors"
+        "general", "analysis"
     ]
 
     for section in required_sections:
@@ -91,8 +90,8 @@ def validate_config(config):
             print(f"ERROR: Missing required section [{section}] in config.toml")
             sys.exit(1)
 
-    if not config["seed_organizations"]["orgs"]:
-        print("ERROR: No seed organizations configured in config.toml!")
+    if not config["general"]["seed_orgs"]:
+        print("ERROR: No seed organizations specified in config.toml")
         sys.exit(1)
 
     return config
@@ -136,32 +135,55 @@ def discover_seed_repositories(config):
         print(f"ERROR: Failed to initialize OSO client: {e}")
         sys.exit(1)
 
-    seed_organizations = config["seed_organizations"]["orgs"]
+    seed_orgs = config["general"]["seed_orgs"]
     all_seed_repos = []
 
-    print(f"Discovering repositories from {len(seed_organizations)} organizations...")
+    print(f"Discovering repositories from {len(seed_orgs)} organizations...")
 
-    for org in seed_organizations:
-        print(f"  Finding repositories in {org}...")
+    for org in seed_orgs:
+        print(f"  Finding repositories in {org} (with minimum {config.get('analysis', {}).get('min_core_contributors', 2)} core contributors)...")
         try:
-            # Build exclude patterns filter
-            exclude_conditions = []
-            for pattern in config.get("seed_repositories", {}).get("exclude_patterns", []):
-                exclude_conditions.append(f"LOWER(artifact_name) NOT LIKE LOWER('%{pattern}%')")
-            exclude_filter = " AND " + " AND ".join(exclude_conditions) if exclude_conditions else ""
+            # Get filtering parameters
+            min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
+            min_commits = config.get("analysis", {}).get("min_commits", 10)
 
-            # Query to find all repositories in organization
+            # Query to find repositories with minimum core contributors
             org_repos_query = f"""
+            WITH contributor_commits AS (
+                SELECT
+                    p.artifact_id,
+                    p.artifact_namespace,
+                    p.artifact_name,
+                    u.artifact_name as contributor,
+                    SUM(e.amount) as total_commits
+                FROM artifacts_by_project_v1 p
+                JOIN int_events_daily__github e ON e.to_artifact_id = p.artifact_id
+                JOIN int_github_users u ON e.from_artifact_id = u.artifact_id
+                WHERE p.artifact_source = 'GITHUB'
+                  AND p.artifact_namespace = '{org}'
+                  AND e.event_type = 'COMMIT_CODE'
+                  AND u.artifact_name NOT LIKE '%[bot]'
+                  AND u.artifact_name NOT LIKE '%-bot'
+                GROUP BY p.artifact_id, p.artifact_namespace, p.artifact_name, u.artifact_name
+                HAVING SUM(e.amount) >= {min_commits}
+            ),
+            repo_contributor_counts AS (
+                SELECT
+                    artifact_namespace,
+                    artifact_name,
+                    CONCAT(artifact_namespace, '/', artifact_name) as repository_name,
+                    COUNT(DISTINCT contributor) as core_contributor_count
+                FROM contributor_commits
+                GROUP BY artifact_namespace, artifact_name
+                HAVING COUNT(DISTINCT contributor) >= {min_core_contributors}
+            )
             SELECT
                 artifact_namespace,
                 artifact_name,
-                CONCAT(artifact_namespace, '/', artifact_name) as repository_name
-            FROM artifacts_by_project_v1
-            WHERE artifact_source = 'GITHUB'
-            AND artifact_namespace = '{org}'
-            {exclude_filter}
+                repository_name
+            FROM repo_contributor_counts
             ORDER BY artifact_name
-            LIMIT {config.get('query_limits', {}).get('seed_repos_per_org_limit', 100)}
+            LIMIT {config.get('analysis', {}).get('max_repos_per_org', 200)}
             """
 
             org_repos_df = client.to_pandas(org_repos_query)
@@ -223,7 +245,7 @@ def find_core_contributors(seed_repos, config):
     print(f"Finding contributors for {len(seed_repos)} seed repositories...")
 
     # Configure parameters from config.toml
-    min_commits = config.get("contributors", {}).get("min_commits", 10)
+    min_commits = config.get("analysis", {}).get("min_commits", 10)
     date_filter_days = config.get("general", {}).get("days_back", 0)
 
     # Use repo_to_contributors module
@@ -247,10 +269,8 @@ def find_core_contributors(seed_repos, config):
         'active_days': 'sum'
     }).sort_values('total_commits', ascending=False)
 
-    # Apply configured limit for core contributors
-    max_core_contributors = config.get("contributors", {}).get("max_core_contributors_for_extended_analysis", 30)
-    top_contributors = contributor_summary.head(max_core_contributors)
-    core_contributor_handles = top_contributors.index.tolist()
+    # Get all core contributors (no artificial limit)
+    core_contributor_handles = contributor_summary.index.tolist()
 
     return core_contributor_handles
 
@@ -266,8 +286,8 @@ def find_extended_ecosystem(core_contributors, config):
     print(f"Finding repositories for {len(core_contributors)} core contributors...")
 
     # Configure parameters from config.toml
-    min_commits = config.get("extended_repositories", {}).get("min_core_contributors", 2)
-    include_org_repos = True  # Always include organization repos
+    min_commits = config.get("analysis", {}).get("min_commits", 10)
+    include_org_repos = True  # Always include organization repositories
     date_filter_days = config.get("general", {}).get("days_back", 0)
 
     # Use contributors_to_repos module
@@ -304,13 +324,6 @@ def find_extended_ecosystem(core_contributors, config):
     if not organization_repos_df.empty:
         # Get all repositories from the extended organizations
         org_repo_names = organization_repos_df['repository_name'].unique().tolist()
-
-        # Apply limit to avoid overwhelming the system
-        max_extended_repos = config.get("extended_repositories", {}).get("max_extended_repos", 200)
-        if len(org_repo_names) > max_extended_repos:
-            print(f"  Limiting extended repos to {max_extended_repos} (found {len(org_repo_names)})")
-            org_repo_names = org_repo_names[:max_extended_repos]
-
         extended_repos.extend(org_repo_names)
 
         # Get unique organizations
@@ -365,7 +378,8 @@ def find_extended_repos_by_stars(core_contributors, config, degree=1):
         return []
 
     degree_text = "core" if degree == 1 else "extended"
-    print(f"Finding repos contributed to by {len(core_contributors)} {degree_text} contributors...")
+    min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
+    print(f"Finding repos contributed to by {len(core_contributors)} {degree_text} contributors (with minimum {min_core_contributors} core contributors)...")
 
     # Build contributors filter
     contributors_str = "', '".join([c.replace("'", "''") for c in core_contributors])
@@ -417,8 +431,38 @@ def find_extended_repos_by_stars(core_contributors, config, degree=1):
 
                 org_condition_str = " OR ".join(org_conditions)
 
+                min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
+                min_commits = config.get("analysis", {}).get("min_commits", 10)
+
                 stars_query = f"""
-                WITH ranked_repos AS (
+                WITH contributor_commits AS (
+                    SELECT
+                        p.artifact_id,
+                        p.artifact_namespace,
+                        p.artifact_name,
+                        u.artifact_name as contributor,
+                        SUM(e.amount) as total_commits
+                    FROM artifacts_by_project_v1 p
+                    JOIN int_events_daily__github e ON e.to_artifact_id = p.artifact_id
+                    JOIN int_github_users u ON e.from_artifact_id = u.artifact_id
+                    WHERE ({org_condition_str})
+                      AND e.event_type = 'COMMIT_CODE'
+                      AND u.artifact_name NOT LIKE '%[bot]'
+                      AND u.artifact_name NOT LIKE '%-bot'
+                      AND p.artifact_source = 'GITHUB'
+                    GROUP BY p.artifact_id, p.artifact_namespace, p.artifact_name, u.artifact_name
+                    HAVING SUM(e.amount) >= {min_commits}
+                ),
+                repo_with_core_contributors AS (
+                    SELECT
+                        artifact_namespace,
+                        artifact_name,
+                        COUNT(DISTINCT contributor) as core_contributor_count
+                    FROM contributor_commits
+                    GROUP BY artifact_namespace, artifact_name
+                    HAVING COUNT(DISTINCT contributor) >= {min_core_contributors}
+                ),
+                ranked_repos AS (
                     SELECT
                         p.artifact_namespace as org_name,
                         p.artifact_name as repo_name,
@@ -427,6 +471,7 @@ def find_extended_repos_by_stars(core_contributors, config, degree=1):
                         ROW_NUMBER() OVER (PARTITION BY p.artifact_namespace ORDER BY SUM(e.amount) DESC) as rn
                     FROM int_events_daily__github AS e
                     JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
+                    JOIN repo_with_core_contributors rc ON p.artifact_namespace = rc.artifact_namespace AND p.artifact_name = rc.artifact_name
                     WHERE ({org_condition_str})
                       AND e.event_type = 'STARRED'
                       AND p.artifact_source = 'GITHUB'
@@ -506,7 +551,7 @@ def find_extended_contributors(extended_repos, config):
     print(f"Finding contributors for {len(extended_repos)} extended repositories...")
 
     # Configure parameters from config.toml
-    min_commits = config.get("extended_contributors", {}).get("min_commits_extended", 3)
+    min_commits = config.get("analysis", {}).get("min_commits", 10)
     date_filter_days = config.get("general", {}).get("days_back", 0)
 
     # Use repo_to_contributors module
