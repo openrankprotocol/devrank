@@ -102,7 +102,7 @@ def generate_trust_relationships():
 
     # Convert to list and process in batches
     pairs_list = list(user_repo_pairs)
-    batch_size = 500  # Small batches to avoid query limits
+    batch_size = 200  # Small batches to avoid query limits
 
     all_trust_dfs = []
 

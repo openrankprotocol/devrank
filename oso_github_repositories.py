@@ -455,29 +455,12 @@ def find_extended_repos_by_stars(core_contributors, config, degree=1):
 
         extended_repos = list(set(extended_repos))  # Remove duplicates
 
-        # Apply total repo limit to stay around 2000 across both degrees
-        max_total_repos = 2000
-        if degree == 1:
-            # For first degree, limit to ~1000 to leave room for second degree
-            max_repos_first_degree = 1000
-            if len(extended_repos) > max_repos_first_degree:
-                extended_repos = extended_repos[:max_repos_first_degree]
-                print(f"✓ Limited to {len(extended_repos)} repositories for first degree")
-        else:
-            # For second degree, check current total and limit accordingly
-            existing_file = output_dir / "crypto_extended_repos_by_stars.csv"
-            if existing_file.exists():
-                existing_df = pd.read_csv(existing_file)
-                current_count = len(existing_df)
-                remaining_slots = max_total_repos - current_count
-                if len(extended_repos) > remaining_slots:
-                    extended_repos = extended_repos[:remaining_slots]
-                    print(f"✓ Limited to {len(extended_repos)} repositories for second degree (total will be ~{current_count + len(extended_repos)})")
+        # No limits - find as many repos as possible
+        output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
 
         print(f"✓ Total extended repositories: {len(extended_repos)}")
 
         # Save extended repositories list
-        output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
         output_dir.mkdir(parents=True, exist_ok=True)
 
         extended_repos_df = pd.DataFrame({
@@ -537,21 +520,8 @@ def find_extended_contributors(extended_repos, config):
         print("No extended contributors found")
         return pd.DataFrame()
 
-    # Apply configured limit for extended contributors
-    max_extended_contributors = config.get("extended_contributors", {}).get("max_extended_contributors", 18000)
-
-    # Prioritize contributors by total commits across all repos
-    contributor_summary = extended_contributors_df.groupby('contributor_handle').agg({
-        'total_commits': 'sum',
-        'repository_name': 'nunique',
-        'active_days': 'sum'
-    }).sort_values('total_commits', ascending=False).head(max_extended_contributors)
-
-    # Filter original data to include only top contributors
-    top_contributor_handles = contributor_summary.index.tolist()
-    filtered_extended_contributors = extended_contributors_df[
-        extended_contributors_df['contributor_handle'].isin(top_contributor_handles)
-    ]
+    # No limits - keep all contributors
+    filtered_extended_contributors = extended_contributors_df
 
     # Save extended contributors data with custom filename
     output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
@@ -559,8 +529,8 @@ def find_extended_contributors(extended_repos, config):
     # Only save specified columns
     filtered_for_save = filtered_extended_contributors[['repository_name', 'contributor_handle']]
 
-    # Check if this is second degree (append mode)
-    is_second_degree = len(extended_repos) > 1200  # Simple heuristic - second degree likely has more repos
+    # Check if this is second degree (append mode) - check if file already has data
+    is_second_degree = extended_contrib_file.exists() and len(pd.read_csv(extended_contrib_file)) > 0
 
     if is_second_degree and extended_contrib_file.exists():
         # Append to existing file
@@ -627,13 +597,15 @@ def main(config_path="config.toml"):
         else:
             extended_contributors_df = find_extended_contributors(extended_repos, config)
 
-        # Step 5: Find extended repos by stars second degree
-        if not extended_contributors_df.empty:
-            # Check if we already have second degree data (file size heuristic)
-            current_repo_count = len(pd.read_csv(extended_repos_file)) if extended_repos_file.exists() else 0
+        # Step 5 & 6: Second degree analysis (optional)
+        enable_second_degree = config.get('general', {}).get('enable_second_degree_analysis', True)
 
-            if current_repo_count > 1200:  # Likely already has second degree data
-                print("✓ Step 5: Second degree repos likely already included in existing file, skipping...")
+        if enable_second_degree and not extended_contributors_df.empty:
+            # Check if we have a second degree marker file to avoid re-running
+            second_degree_marker = output_dir / ".second_degree_completed"
+
+            if second_degree_marker.exists():
+                print("✓ Step 5: Second degree analysis already completed, skipping...")
                 extended_repos_2 = []
             else:
                 extended_contributors_list = extended_contributors_df['contributor_handle'].unique().tolist()
@@ -644,8 +616,15 @@ def main(config_path="config.toml"):
             if extended_repos_2:
                 print(f"Finding second degree contributors from {len(extended_repos_2)} repositories...")
                 extended_contributors_2_df = find_extended_contributors(extended_repos_2, config)
-            else:
-                print("✓ Step 6: No second degree repos to process or already completed")
+                # Create marker file to indicate second degree completion
+                second_degree_marker.touch()
+                print("✓ Second degree analysis completed and marked")
+            elif not second_degree_marker.exists():
+                print("✓ Step 6: No second degree repos found")
+        elif not enable_second_degree:
+            print("✓ Second degree analysis disabled in configuration, skipping steps 5 & 6")
+        else:
+            print("✓ No extended contributors found, skipping second degree analysis")
 
     except KeyboardInterrupt:
         print("\n\n⏹️ Analysis cancelled by user")

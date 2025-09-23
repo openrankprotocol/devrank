@@ -10,6 +10,9 @@ output_dir = "./raw"
 # Set to 0 to include all historical data
 days_back = 0  # 0 = all time, 365 = last year, 730 = last 2 years
 
+# Enable second degree analysis (finding repos from extended contributors)
+enable_second_degree_analysis = false
+
 [seed_organizations]
 # List of seed organizations to analyze
 # All repositories from these organizations will be included
@@ -55,34 +58,34 @@ max_core_contributors_for_extended_analysis = 300
 # Minimum number of core contributors a repo must have to be included
 min_core_contributors = 2
 
-# Maximum number of extended repositories to find
-max_extended_repos = 1500
+# Maximum number of extended repositories to find (0 = no limit)
+max_extended_repos = 0
 
-# Maximum number of extended repos to use for finding extended contributors
-max_extended_repos_for_contributors = 1500
+# Maximum number of extended repos to use for finding extended contributors (0 = no limit)
+max_extended_repos_for_contributors = 0
 
 [extended_contributors]
 # Minimum commits in extended repos to be considered an extended contributor
 min_commits_extended = 3
 
-# Maximum number of extended contributors to fetch
-max_extended_contributors = 18000
+# Maximum number of extended contributors to fetch (0 = no limit)
+max_extended_contributors = 0
 
 [query_limits]
 # SQL query limits to prevent timeouts
 # Increase these if you want more comprehensive results (but slower queries)
 
-# Limit for seed repositories discovery per organization
-seed_repos_per_org_limit = 200
+# Limit for seed repositories discovery per organization (0 = no limit)
+seed_repos_per_org_limit = 0
 
-# Limit for core contributors query
-core_contributors_limit = 1000
+# Limit for core contributors query (0 = no limit)
+core_contributors_limit = 0
 
-# Limit for extended repos query
-extended_repos_limit = 500
+# Limit for extended repos query (0 = no limit)
+extended_repos_limit = 0
 
-# Limit for extended contributors query
-extended_contributors_limit = 5000
+# Limit for extended contributors query (0 = no limit)
+extended_contributors_limit = 0
 
 [filters]
 # Repository filters

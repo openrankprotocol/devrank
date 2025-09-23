@@ -31,11 +31,11 @@ This tool performs a comprehensive 4-step analysis:
 ### Run Analysis
 
 ```bash
-# Using default config.toml
+# Step 1: Run the main analysis
 python oso_github_repositories.py
 
-# Using custom configuration file
-python oso_github_repositories.py my_custom_config.toml
+# Step 2: Generate trust network (optional)
+python generate_trust.py
 ```
 
 ## ⚙️ Configuration
@@ -126,9 +126,66 @@ extended_repos_limit = 200
 extended_contributors_limit = 500
 ```
 
+## 🔗 Graph Builder (Trust Networks)
+
+After running the main analysis, you can generate trust relationships between contributors and repositories using the graph builder:
+
+### How It Works
+
+The `generate_trust.py` script processes your analysis results to create weighted trust networks:
+
+1. **Reads Analysis Data** - Uses the CSV files from your main analysis (seed repos, contributors, extended repos)
+2. **Queries OSO Database** - Gets detailed GitHub activity data for user-repository pairs
+3. **Calculates Trust Scores** - Weights different activities:
+   - **Commits**: 5 points (user → repo), 3 points (repo → user)
+   - **Pull Requests Opened**: 20 points (user → repo), 5 points (repo → user)  
+   - **Pull Requests Merged**: 10 points (user → repo), 1 point (repo → user)
+   - **Issues Opened**: 10 points (user → repo)
+   - **Stars**: 5 points (user → repo)
+   - **Forks**: 1 point (user → repo)
+4. **Generates Bidirectional Graph** - Creates both user-to-repository and repository-to-user trust relationships
+
+### Configuration
+
+The graph builder uses your existing `config.toml` settings and can be enabled in the output section:
+
+```toml
+[output]
+save_network_graph_data = true  # Enable graph data generation
+```
+
+### Usage Example
+
+```bash
+# 1. Run main analysis first
+python oso_github_repositories.py
+
+# 2. Generate trust network from the results
+python generate_trust.py
+
+# 3. Results will be in trust/github.csv
+head trust/github.csv
+# i,j,v
+# vitalik,ethereum/go-ethereum,245.0
+# ethereum/solidity,chriseth,89.5
+# ...
+```
+
+### Output
+
+Trust relationships are saved as CSV files in the `trust/` directory:
+- **`github.csv`** - Main trust network with columns: `i` (from), `j` (to), `v` (trust value)
+- Format suitable for graph analysis tools like NetworkX, igraph, or Gephi
+
+### Performance
+
+- Processes relationships in batches of 200 to avoid database timeouts
+- Automatically saves progress every 10 batches
+- Filters out bot accounts and inactive relationships
+
 ## 📊 Output Files
 
-The analyzer generates 4 CSV files:
+The main analyzer generates 4 CSV files:
 
 ### 1. Seed Repositories (`*_seed_repos_*.csv`)
 ```csv
@@ -273,8 +330,9 @@ Apache 2.0
 
 Contributions welcome! Areas for improvement:
 - Additional data sources beyond GitHub
-- Network visualization capabilities
-- Statistical analysis features
+- Enhanced network visualization capabilities
+- Advanced statistical analysis features
+- Graph metrics computation (centrality, clustering, etc.)
 - Performance optimizations
 - Additional export formats (JSON, Parquet, etc.)
 
