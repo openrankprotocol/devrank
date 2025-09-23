@@ -106,6 +106,17 @@ def discover_seed_repositories(config):
         list: List of repository identifiers in "org/repo" format
     """
 
+    # Check if seed repositories file already exists
+    output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
+    seed_file = output_dir / "crypto_seed_repos.csv"
+
+    if seed_file.exists():
+        print("✓ Seed repositories file already exists, loading from file...")
+        seed_repos_df = pd.read_csv(seed_file)
+        seed_repos = seed_repos_df['repository_name'].tolist()
+        print(f"✓ Loaded {len(seed_repos)} seed repositories from {seed_file}")
+        return seed_repos
+
     # Get API key
     api_key = os.getenv('OSO_API_KEY')
     if not api_key:
@@ -119,7 +130,7 @@ def discover_seed_repositories(config):
         client = pyoso.Client()
         print("✓ OSO client initialized")
     except ImportError:
-        print("ERROR: Install pyoso with: pip install pyoso pandas python-dotenv tomli")
+        print("ERROR: Install pyoso with: pip install pyoso pandas python-dotenv")
         sys.exit(1)
     except Exception as e:
         print(f"ERROR: Failed to initialize OSO client: {e}")
@@ -197,6 +208,18 @@ def find_core_contributors(seed_repos, config):
     Returns:
         list: List of core contributor handles
     """
+
+    # Check if core contributors file already exists
+    output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
+    core_contrib_file = output_dir / "repo_contributors.csv"
+
+    if core_contrib_file.exists():
+        print("✓ Core contributors file already exists, loading from file...")
+        core_contrib_df = pd.read_csv(core_contrib_file)
+        core_contributors = core_contrib_df['contributor_handle'].unique().tolist()
+        print(f"✓ Loaded {len(core_contributors)} core contributors from {core_contrib_file}")
+        return core_contributors
+
     print(f"Finding contributors for {len(seed_repos)} seed repositories...")
 
     # Configure parameters from config.toml
@@ -301,6 +324,171 @@ def find_extended_ecosystem(core_contributors, config):
     return extended_repos, extended_organizations
 
 
+def find_extended_repos_by_stars(core_contributors, config, degree=1):
+    """
+    Find extended repos by stars from orgs that contributors work with
+
+    Given contributors:
+    1. Find all repos they contributed to
+    2. Find all unique orgs/users that own these repos
+    3. Take top 10 repos from each org/user ranked by stars
+
+    Args:
+        core_contributors: List of contributor handles
+        config: Configuration dict
+        degree: Degree of separation (1 or 2)
+
+    Returns:
+        list: List of extended repository names
+    """
+    # Get API key
+    api_key = os.getenv('OSO_API_KEY')
+    if not api_key:
+        print("ERROR: OSO API key required. Set OSO_API_KEY environment variable.")
+        sys.exit(1)
+
+    # Initialize client
+    try:
+        import pyoso
+        os.environ["OSO_API_KEY"] = api_key
+        client = pyoso.Client()
+        print("✓ OSO client initialized")
+    except ImportError:
+        print("ERROR: Install pyoso with: pip install pyoso pandas python-dotenv")
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: Failed to initialize OSO client: {e}")
+        sys.exit(1)
+
+    if not core_contributors:
+        print("ERROR: No core contributors provided")
+        return []
+
+    degree_text = "core" if degree == 1 else "extended"
+    print(f"Finding repos contributed to by {len(core_contributors)} {degree_text} contributors...")
+
+    # Build contributors filter
+    contributors_str = "', '".join([c.replace("'", "''") for c in core_contributors])
+
+    try:
+        # Find all repos that core contributors worked on
+        repos_query = f"""
+        SELECT DISTINCT
+            p.artifact_namespace as org_name,
+            p.artifact_name as repo_name,
+            CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name
+        FROM int_events_daily__github AS e
+        JOIN int_github_users AS u ON e.from_artifact_id = u.artifact_id
+        JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
+        WHERE u.artifact_name IN ('{contributors_str}')
+          AND e.event_type = 'COMMIT_CODE'
+          AND u.artifact_name NOT LIKE '%[bot]'
+          AND u.artifact_name NOT LIKE '%-bot'
+          AND e.bucket_day >= DATE '2020-01-01'
+          AND e.bucket_day <= DATE '2024-06-27'
+          AND p.artifact_source = 'GITHUB'
+        """
+
+        repos_df = client.to_pandas(repos_query)
+
+        if repos_df.empty:
+            print("✗ No repositories found for core contributors")
+            return []
+
+        print(f"✓ Found {len(repos_df)} repositories contributed to by {degree_text} contributors")
+
+        # Get unique organizations
+        unique_orgs = repos_df['org_name'].unique()
+        print(f"✓ Identified {len(unique_orgs)} unique organizations/users")
+
+        # For each org, get top 10 repos by stars
+        extended_repos = []
+
+        for org in unique_orgs:
+            try:
+                stars_query = f"""
+                SELECT
+                    p.artifact_namespace as org_name,
+                    p.artifact_name as repo_name,
+                    CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name,
+                    SUM(e.amount) as total_stars
+                FROM int_events_daily__github AS e
+                JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
+                WHERE p.artifact_namespace = '{org.replace(chr(39), chr(39)+chr(39))}'
+                  AND e.event_type = 'STARRED'
+                  AND p.artifact_source = 'GITHUB'
+                GROUP BY p.artifact_namespace, p.artifact_name
+                ORDER BY total_stars DESC
+                LIMIT 15
+                """
+
+                org_stars_df = client.to_pandas(stars_query)
+
+                if not org_stars_df.empty:
+                    org_repos = org_stars_df['repository_name'].tolist()
+                    extended_repos.extend(org_repos)
+                    print(f"  {org}: Found {len(org_repos)} top starred repos")
+
+            except Exception as e:
+                print(f"  {org}: Error getting starred repos - {e}")
+                continue
+
+        extended_repos = list(set(extended_repos))  # Remove duplicates
+
+        # Apply total repo limit to stay around 2000 across both degrees
+        max_total_repos = 2000
+        if degree == 1:
+            # For first degree, limit to ~1000 to leave room for second degree
+            max_repos_first_degree = 1000
+            if len(extended_repos) > max_repos_first_degree:
+                extended_repos = extended_repos[:max_repos_first_degree]
+                print(f"✓ Limited to {len(extended_repos)} repositories for first degree")
+        else:
+            # For second degree, check current total and limit accordingly
+            existing_file = output_dir / "crypto_extended_repos_by_stars.csv"
+            if existing_file.exists():
+                existing_df = pd.read_csv(existing_file)
+                current_count = len(existing_df)
+                remaining_slots = max_total_repos - current_count
+                if len(extended_repos) > remaining_slots:
+                    extended_repos = extended_repos[:remaining_slots]
+                    print(f"✓ Limited to {len(extended_repos)} repositories for second degree (total will be ~{current_count + len(extended_repos)})")
+
+        print(f"✓ Total extended repositories: {len(extended_repos)}")
+
+        # Save extended repositories list
+        output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        extended_repos_df = pd.DataFrame({
+            'repository_name': extended_repos,
+        })
+
+        if degree == 1:
+            extended_file = output_dir / "crypto_extended_repos_by_stars.csv"
+            extended_repos_df.to_csv(extended_file, index=False)
+            print(f"✓ Saved extended repositories: {extended_file}")
+        else:
+            extended_file = output_dir / "crypto_extended_repos_by_stars.csv"
+            # Append to existing file
+            if extended_file.exists():
+                existing_df = pd.read_csv(extended_file)
+                combined_df = pd.concat([existing_df, extended_repos_df], ignore_index=True)
+                # Remove duplicates
+                combined_df = combined_df.drop_duplicates(subset=['repository_name'])
+                combined_df.to_csv(extended_file, index=False)
+                print(f"✓ Appended {len(extended_repos_df)} repositories (total: {len(combined_df)}) to: {extended_file}")
+            else:
+                extended_repos_df.to_csv(extended_file, index=False)
+                print(f"✓ Saved extended repositories: {extended_file}")
+
+        return extended_repos
+
+    except Exception as e:
+        print(f"ERROR: Failed to find extended repos by stars: {e}")
+        return []
+
+
 def find_extended_contributors(extended_repos, config):
     """
     Step 4: Find extended contributors from extended repositories using repo_to_contributors.py
@@ -313,9 +501,6 @@ def find_extended_contributors(extended_repos, config):
         return pd.DataFrame()
 
     print(f"Finding contributors for {len(extended_repos)} extended repositories...")
-
-    # Limit repositories to avoid overwhelming the system
-    max_repos_for_contributors = config.get("extended_repositories", {}).get("max_extended_repos_for_contributors", 100)
 
     # Configure parameters from config.toml
     min_commits = config.get("extended_contributors", {}).get("min_commits_extended", 3)
@@ -333,7 +518,7 @@ def find_extended_contributors(extended_repos, config):
         return pd.DataFrame()
 
     # Apply configured limit for extended contributors
-    max_extended_contributors = config.get("extended_contributors", {}).get("max_extended_contributors", 500)
+    max_extended_contributors = config.get("extended_contributors", {}).get("max_extended_contributors", 18000)
 
     # Prioritize contributors by total commits across all repos
     contributor_summary = extended_contributors_df.groupby('contributor_handle').agg({
@@ -350,10 +535,24 @@ def find_extended_contributors(extended_repos, config):
 
     # Save extended contributors data with custom filename
     output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
-    extended_contrib_file = output_dir / "crypto_extended_contributors.csv"
+    extended_contrib_file = output_dir / "crypto_extended_contributors_by_stars.csv"
     # Only save specified columns
     filtered_for_save = filtered_extended_contributors[['repository_name', 'contributor_handle']]
-    filtered_for_save.to_csv(extended_contrib_file, index=False)
+
+    # Check if this is second degree (append mode)
+    is_second_degree = len(extended_repos) > 1200  # Simple heuristic - second degree likely has more repos
+
+    if is_second_degree and extended_contrib_file.exists():
+        # Append to existing file
+        existing_df = pd.read_csv(extended_contrib_file)
+        combined_df = pd.concat([existing_df, filtered_for_save], ignore_index=True)
+        # Remove duplicates
+        combined_df = combined_df.drop_duplicates(subset=['repository_name', 'contributor_handle'])
+        combined_df.to_csv(extended_contrib_file, index=False)
+        print(f"✓ Appended {len(filtered_for_save)} contributors (total: {len(combined_df)}) to: {extended_contrib_file}")
+    else:
+        filtered_for_save.to_csv(extended_contrib_file, index=False)
+        print(f"✓ Saved extended contributors: {extended_contrib_file}")
 
     return filtered_extended_contributors
 
@@ -367,17 +566,66 @@ def main(config_path="config.toml"):
     date_filter_text = 'All time' if date_filter_days == 0 else f'{date_filter_days} days back'
 
     try:
+        output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
+
         # Step 1: Discover seed repositories from organizations
-        seed_repos = discover_seed_repositories(config)
+        seed_repos_file = output_dir / "crypto_seed_repos.csv"
+        if seed_repos_file.exists():
+            print("✓ Step 1: Seed repositories file already exists, loading from file...")
+            seed_repos_df = pd.read_csv(seed_repos_file)
+            seed_repos = seed_repos_df['repository_name'].tolist()
+            print(f"✓ Loaded {len(seed_repos)} seed repositories from {seed_repos_file}")
+        else:
+            seed_repos = discover_seed_repositories(config)
 
         # Step 2: Find core contributors using repo_to_contributors
-        core_contributors = find_core_contributors(seed_repos, config)
+        core_contrib_file = output_dir / "repo_contributors.csv"
+        if core_contrib_file.exists():
+            print("✓ Step 2: Core contributors file already exists, loading from file...")
+            core_contrib_df = pd.read_csv(core_contrib_file)
+            core_contributors = core_contrib_df['contributor_handle'].unique().tolist()
+            print(f"✓ Loaded {len(core_contributors)} core contributors from {core_contrib_file}")
+        else:
+            core_contributors = find_core_contributors(seed_repos, config)
 
-        # Step 3: Find extended ecosystem using contributors_to_repos
-        extended_repos, extended_organizations = find_extended_ecosystem(core_contributors, config)
+        # Step 3: Find extended repos by stars from orgs that core contributors work with
+        extended_repos_file = output_dir / "crypto_extended_repos_by_stars.csv"
+        if extended_repos_file.exists():
+            print("✓ Step 3: Extended repos file already exists, loading from file...")
+            extended_repos_df = pd.read_csv(extended_repos_file)
+            extended_repos = extended_repos_df['repository_name'].tolist()
+            print(f"✓ Loaded {len(extended_repos)} extended repositories from {extended_repos_file}")
+        else:
+            extended_repos = find_extended_repos_by_stars(core_contributors, config, degree=1)
 
         # Step 4: Find extended contributors using repo_to_contributors
-        extended_contributors_df = find_extended_contributors(extended_repos, config)
+        extended_contrib_file = output_dir / "crypto_extended_contributors_by_stars.csv"
+        if extended_contrib_file.exists():
+            print("✓ Step 4: Extended contributors file already exists, loading from file...")
+            extended_contributors_df = pd.read_csv(extended_contrib_file)
+            print(f"✓ Loaded {len(extended_contributors_df)} extended contributor records from {extended_contrib_file}")
+        else:
+            extended_contributors_df = find_extended_contributors(extended_repos, config)
+
+        # Step 5: Find extended repos by stars second degree
+        if not extended_contributors_df.empty:
+            # Check if we already have second degree data (file size heuristic)
+            current_repo_count = len(pd.read_csv(extended_repos_file)) if extended_repos_file.exists() else 0
+
+            if current_repo_count > 1200:  # Likely already has second degree data
+                print("✓ Step 5: Second degree repos likely already included in existing file, skipping...")
+                extended_repos_2 = []
+            else:
+                extended_contributors_list = extended_contributors_df['contributor_handle'].unique().tolist()
+                print(f"\nStarting second degree analysis with {len(extended_contributors_list)} contributors...")
+                extended_repos_2 = find_extended_repos_by_stars(extended_contributors_list, config, degree=2)
+
+            # Step 6: Find extended contributors second degree
+            if extended_repos_2:
+                print(f"Finding second degree contributors from {len(extended_repos_2)} repositories...")
+                extended_contributors_2_df = find_extended_contributors(extended_repos_2, config)
+            else:
+                print("✓ Step 6: No second degree repos to process or already completed")
 
     except KeyboardInterrupt:
         print("\n\n⏹️ Analysis cancelled by user")

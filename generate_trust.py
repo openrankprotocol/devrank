@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Generate Local Trust Relationships from OSO Database (Using Raw File Connections)
+Generate Local Trust Relationships from OSO Database (Using New Pipeline Files)
 
-This script uses existing connections from raw files to identify user-repo pairs,
-then queries OSO database only for those specific pairs to get real trust data.
+This script uses the new pipeline files (crypto_extended_contributors_by_stars.csv)
+to identify user-repo pairs, then queries OSO database for those specific pairs.
 """
 
 import os
@@ -53,6 +53,24 @@ def generate_trust_relationships():
 
     # Collect all user-repo pairs from existing data
     user_repo_pairs = set()
+    all_repos = set()
+
+    # Load all repositories from seed and extended repos files
+    seed_repos_file = raw_dir / "crypto_seed_repos.csv"
+    if seed_repos_file.exists():
+        df = pd.read_csv(seed_repos_file)
+        seed_repos = set(df['repository_name'].dropna().tolist())
+        all_repos.update(seed_repos)
+        print(f"  Loaded {len(seed_repos)} seed repositories")
+
+    extended_repos_file = raw_dir / "crypto_extended_repos_by_stars.csv"
+    if extended_repos_file.exists():
+        df = pd.read_csv(extended_repos_file)
+        extended_repos = set(df['repository_name'].dropna().tolist())
+        all_repos.update(extended_repos)
+        print(f"  Loaded {len(extended_repos)} extended repositories by stars")
+
+    print(f"  Total unique repositories: {len(all_repos)}")
 
     # From repo_contributors.csv
     repo_contrib_file = raw_dir / "repo_contributors.csv"
@@ -61,20 +79,20 @@ def generate_trust_relationships():
         for _, row in df.iterrows():
             user = row['contributor_handle']
             repo = row['repository_name']
-            if pd.notna(user) and pd.notna(repo):
+            if pd.notna(user) and pd.notna(repo) and repo in all_repos:
                 user_repo_pairs.add((user, repo))
-        print(f"  Found {len(df)} pairs from repo_contributors.csv")
+        print(f"  Found {len(df)} pairs from repo_contributors.csv (filtered to our repos)")
 
-    # From crypto_extended_contributors.csv (has both columns)
-    extended_file = raw_dir / "crypto_extended_contributors.csv"
-    if extended_file.exists():
-        df = pd.read_csv(extended_file)
+    # From crypto_extended_contributors_by_stars.csv (has both columns)
+    extended_contrib_file = raw_dir / "crypto_extended_contributors_by_stars.csv"
+    if extended_contrib_file.exists():
+        df = pd.read_csv(extended_contrib_file)
         for _, row in df.iterrows():
             user = row['contributor_handle']
             repo = row['repository_name']
-            if pd.notna(user) and pd.notna(repo):
+            if pd.notna(user) and pd.notna(repo) and repo in all_repos:
                 user_repo_pairs.add((user, repo))
-        print(f"  Found {len(df)} pairs from crypto_extended_contributors.csv")
+        print(f"  Found {len(df)} pairs from crypto_extended_contributors_by_stars.csv")
 
     print(f"Total unique user-repo pairs: {len(user_repo_pairs)}")
 

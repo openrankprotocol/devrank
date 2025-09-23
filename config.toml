@@ -32,7 +32,7 @@ orgs = [
 min_repo_commits = 10
 
 # Maximum number of repositories to include per organization (0 = no limit)
-max_repos_per_org = 100
+max_repos_per_org = 200
 
 # Exclude repositories that match these patterns (case-insensitive)
 exclude_patterns = []
@@ -45,44 +45,44 @@ exclude_forks = true
 min_commits = 10
 
 # Maximum number of top contributors to fetch per seed repository
-max_contributors_per_repo = 30
+max_contributors_per_repo = 50
 
 # Maximum number of total core contributors to use for extended analysis
 # (to keep queries fast, we limit this)
-max_core_contributors_for_extended_analysis = 150
+max_core_contributors_for_extended_analysis = 300
 
 [extended_repositories]
 # Minimum number of core contributors a repo must have to be included
 min_core_contributors = 2
 
 # Maximum number of extended repositories to find
-max_extended_repos = 500
+max_extended_repos = 1500
 
 # Maximum number of extended repos to use for finding extended contributors
-max_extended_repos_for_contributors = 500
+max_extended_repos_for_contributors = 1500
 
 [extended_contributors]
 # Minimum commits in extended repos to be considered an extended contributor
 min_commits_extended = 3
 
 # Maximum number of extended contributors to fetch
-max_extended_contributors = 20000
+max_extended_contributors = 18000
 
 [query_limits]
 # SQL query limits to prevent timeouts
 # Increase these if you want more comprehensive results (but slower queries)
 
 # Limit for seed repositories discovery per organization
-seed_repos_per_org_limit = 50
+seed_repos_per_org_limit = 200
 
 # Limit for core contributors query
-core_contributors_limit = 500
+core_contributors_limit = 1000
 
 # Limit for extended repos query
-extended_repos_limit = 100
+extended_repos_limit = 500
 
 # Limit for extended contributors query
-extended_contributors_limit = 2000
+extended_contributors_limit = 5000
 
 [filters]
 # Repository filters
