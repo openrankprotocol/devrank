@@ -3,6 +3,7 @@ filtered/**
 scores/**
 trust/**
 seed/**
+tmp/**
 
 __pycache__
 

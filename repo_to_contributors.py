@@ -20,6 +20,8 @@ import sys
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 try:
     from dotenv import load_dotenv
@@ -47,26 +49,15 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
             - first_commit: first commit date
             - last_commit: last commit date
     """
-
     # Get API key
     api_key = os.getenv('OSO_API_KEY')
     if not api_key:
         print("ERROR: OSO API key required. Set OSO_API_KEY environment variable.")
-        print("Get key at: https://www.opensource.observer")
         sys.exit(1)
 
-    # Initialize client
-    try:
-        import pyoso
-        os.environ["OSO_API_KEY"] = api_key
-        client = pyoso.Client()
-        print("✓ OSO client initialized")
-    except ImportError:
-        print("ERROR: Install pyoso with: pip install pyoso pandas python-dotenv")
-        sys.exit(1)
-    except Exception as e:
-        print(f"ERROR: Failed to initialize OSO client: {e}")
-        sys.exit(1)
+    if not repo_identifiers:
+        print("ERROR: No repository identifiers provided")
+        return pd.DataFrame()
 
     print(f"Finding contributors for {len(repo_identifiers)} repositories...")
 
@@ -77,13 +68,45 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
         cutoff_date = datetime.now() - timedelta(days=date_filter_days)
         date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
 
-    # Process repositories in batches to avoid query compiler limit
+    # Process repositories in batches with parallel processing
     batch_size = 100
-    all_contributors = []
+    batches = []
 
+    # Create batches
     for i in range(0, len(repo_identifiers), batch_size):
         batch_repos = repo_identifiers[i:i+batch_size]
-        print(f"  Processing batch {i//batch_size + 1}/{(len(repo_identifiers)-1)//batch_size + 1} ({len(batch_repos)} repositories)...")
+        batches.append((i//batch_size + 1, batch_repos))
+
+    max_workers = min(4, len(batches))
+    print(f"Processing {len(batches)} batches in parallel using {max_workers} workers...")
+
+    from datetime import datetime
+    start_time = datetime.now()
+
+    # Thread-local storage for clients
+    thread_local = threading.local()
+
+    def get_client():
+        """Get thread-local OSO client"""
+        if not hasattr(thread_local, 'client'):
+            try:
+                import pyoso
+                os.environ["OSO_API_KEY"] = api_key
+                thread_local.client = pyoso.Client()
+            except ImportError:
+                print("ERROR: Install pyoso with: pip install pyoso pandas python-dotenv")
+                sys.exit(1)
+            except Exception as e:
+                print(f"ERROR: Failed to initialize OSO client: {e}")
+                sys.exit(1)
+        return thread_local.client
+
+    def process_batch(batch_info):
+        """Process a single batch of repositories"""
+        batch_num, batch_repos = batch_info
+        client = get_client()
+
+        print(f"  Processing batch {batch_num}/{len(batches)} ({len(batch_repos)} repositories)...")
 
         # Build repository conditions for this batch
         repo_conditions = []
@@ -95,7 +118,7 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
                 print(f"WARNING: Invalid repo format '{repo_id}', should be 'org/repo'")
 
         if not repo_conditions:
-            continue
+            return pd.DataFrame()
 
         repo_condition_str = " OR ".join(repo_conditions)
 
@@ -129,20 +152,36 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
             batch_contributors_df = client.to_pandas(contributors_query)
 
             if not batch_contributors_df.empty:
-                all_contributors.append(batch_contributors_df)
-                print(f"    Found {len(batch_contributors_df)} contributor records in this batch")
+                print(f"    Batch {batch_num}: Found {len(batch_contributors_df)} contributor records")
+                return batch_contributors_df
+            else:
+                print(f"    Batch {batch_num}: No contributors found")
+                return pd.DataFrame()
 
         except Exception as e:
-            print(f"    ERROR: Batch query failed: {str(e)}")
-            continue
+            print(f"    ERROR: Batch {batch_num} query failed: {str(e)}")
+            return pd.DataFrame()
+
+    # Process batches in parallel (optimize thread count based on batch count)
+    all_contributors = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_batch = {executor.submit(process_batch, batch): batch for batch in batches}
+
+        for future in as_completed(future_to_batch):
+            batch_contributors_df = future.result()
+            if not batch_contributors_df.empty:
+                all_contributors.append(batch_contributors_df)
 
     # Combine all batches
+    end_time = datetime.now()
+    duration = (end_time - start_time).total_seconds()
+
     if all_contributors:
         contributors_df = pd.concat(all_contributors, ignore_index=True)
-        print(f"✓ Found {len(contributors_df)} contributor records")
+        print(f"✓ Found {len(contributors_df)} contributor records in {duration:.1f}s using {max_workers} parallel workers")
         return contributors_df
     else:
-        print("✗ No contributors found for the specified repositories")
+        print(f"✗ No contributors found for the specified repositories (completed in {duration:.1f}s)")
         return pd.DataFrame()
 
 

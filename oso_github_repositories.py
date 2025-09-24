@@ -31,6 +31,8 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 import importlib.util
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 try:
     from dotenv import load_dotenv
@@ -337,7 +339,7 @@ def find_extended_ecosystem(core_contributors, config):
     return extended_repos, extended_organizations
 
 
-def find_extended_repos_by_stars(core_contributors, config, degree=1):
+def find_extended_repos_by_stars(core_contributors, config):
     """
     Find extended repos by stars from orgs that contributors work with
 
@@ -349,7 +351,6 @@ def find_extended_repos_by_stars(core_contributors, config, degree=1):
     Args:
         core_contributors: List of contributor handles
         config: Configuration dict
-        degree: Degree of separation (1 or 2)
 
     Returns:
         list: List of extended repository names
@@ -377,9 +378,8 @@ def find_extended_repos_by_stars(core_contributors, config, degree=1):
         print("ERROR: No core contributors provided")
         return []
 
-    degree_text = "core" if degree == 1 else "extended"
     min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
-    print(f"Finding repos contributed to by {len(core_contributors)} {degree_text} contributors (with minimum {min_core_contributors} core contributors)...")
+    print(f"Finding repos contributed to by {len(core_contributors)} core contributors (with minimum {min_core_contributors} core contributors)...")
 
     # Build contributors filter
     contributors_str = "', '".join([c.replace("'", "''") for c in core_contributors])
@@ -409,19 +409,49 @@ def find_extended_repos_by_stars(core_contributors, config, degree=1):
             print("✗ No repositories found for core contributors")
             return []
 
-        print(f"✓ Found {len(repos_df)} repositories contributed to by {degree_text} contributors")
+        print(f"✓ Found {len(repos_df)} repositories contributed to by core contributors")
 
         # Get unique organizations
         unique_orgs = repos_df['org_name'].unique()
         print(f"✓ Identified {len(unique_orgs)} unique organizations/users")
 
-        # Process organizations in batches for faster queries
-        extended_repos = []
+        # Process organizations in batches with parallel processing
         batch_size = 500
+        batches = []
 
+        # Create batches
         for batch_start in range(0, len(unique_orgs), batch_size):
             batch_orgs = unique_orgs[batch_start:batch_start + batch_size]
-            print(f"  Processing batch {batch_start // batch_size + 1}/{(len(unique_orgs) - 1) // batch_size + 1} ({len(batch_orgs)} organizations)...")
+            batch_num = batch_start // batch_size + 1
+            batches.append((batch_num, batch_orgs))
+
+        max_workers = min(4, len(batches))
+        print(f"Processing {len(batches)} organization batches in parallel using {max_workers} workers...")
+
+        from datetime import datetime
+        start_time = datetime.now()
+
+        # Thread-local storage for clients
+        thread_local = threading.local()
+
+        def get_client():
+            """Get thread-local OSO client"""
+            if not hasattr(thread_local, 'client'):
+                try:
+                    import pyoso
+                    os.environ["OSO_API_KEY"] = api_key
+                    thread_local.client = pyoso.Client()
+                except Exception as e:
+                    print(f"ERROR: Failed to initialize OSO client in thread: {e}")
+                    raise e
+            return thread_local.client
+
+        def process_org_batch(batch_info):
+            """Process a single batch of organizations"""
+            batch_num, batch_orgs = batch_info
+            batch_client = get_client()
+
+            print(f"  Processing batch {batch_num}/{len(batches)} ({len(batch_orgs)} organizations)...")
 
             try:
                 # Build org conditions for batch
@@ -479,31 +509,58 @@ def find_extended_repos_by_stars(core_contributors, config, degree=1):
                 )
                 SELECT org_name, repo_name, repository_name, total_stars
                 FROM ranked_repos
-                WHERE rn <= 15
+                WHERE rn <= {config.get('analysis', {}).get('max_repos_per_org', 200)}
                 ORDER BY org_name, total_stars DESC
                 """
 
-                batch_stars_df = client.to_pandas(stars_query)
+                batch_stars_df = batch_client.to_pandas(stars_query)
 
                 if not batch_stars_df.empty:
                     batch_repos = batch_stars_df['repository_name'].tolist()
-                    extended_repos.extend(batch_repos)
 
                     # Show summary by org
                     org_counts = batch_stars_df.groupby('org_name').size()
+                    summary = []
                     for org, count in org_counts.items():
-                        print(f"    {org}: Found {count} top starred repos")
+                        summary.append(f"{org}: {count}")
+                    print(f"    Batch {batch_num}: Found repos for {', '.join(summary)}")
+                    return batch_repos
+                else:
+                    print(f"    Batch {batch_num}: No repositories found")
+                    return []
 
             except Exception as e:
-                print(f"    Error getting starred repos for batch: {e}")
-                continue
+                print(f"    ERROR: Batch {batch_num} query failed: {str(e)}")
+                return []
+
+        # Process batches in parallel
+        extended_repos = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_batch = {executor.submit(process_org_batch, batch): batch for batch in batches}
+
+            for future in as_completed(future_to_batch):
+                try:
+                    batch_repos = future.result()
+                    if batch_repos:
+                        extended_repos.extend(batch_repos)
+                except Exception as e:
+                    batch_num = future_to_batch.get(future, ("unknown",))[0]
+                    error_msg = str(e)
+                    if "Expecting value" in error_msg:
+                        print(f"    ✗ Batch {batch_num} thread failed: API returned empty response (likely rate limited)")
+                    else:
+                        print(f"    ✗ Thread failed for batch {batch_num}: {error_msg}")
+                    continue
+
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
 
         extended_repos = list(set(extended_repos))  # Remove duplicates
 
         # No limits - find as many repos as possible
         output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
 
-        print(f"✓ Total extended repositories: {len(extended_repos)}")
+        print(f"✓ Found {len(extended_repos)} extended repositories in {duration:.1f}s using {max_workers} parallel workers")
 
         # Save extended repositories list
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -512,23 +569,9 @@ def find_extended_repos_by_stars(core_contributors, config, degree=1):
             'repository_name': extended_repos,
         })
 
-        if degree == 1:
-            extended_file = output_dir / "crypto_extended_repos_by_stars.csv"
-            extended_repos_df.to_csv(extended_file, index=False)
-            print(f"✓ Saved extended repositories: {extended_file}")
-        else:
-            extended_file = output_dir / "crypto_extended_repos_by_stars.csv"
-            # Append to existing file
-            if extended_file.exists():
-                existing_df = pd.read_csv(extended_file)
-                combined_df = pd.concat([existing_df, extended_repos_df], ignore_index=True)
-                # Remove duplicates
-                combined_df = combined_df.drop_duplicates(subset=['repository_name'])
-                combined_df.to_csv(extended_file, index=False)
-                print(f"✓ Appended {len(extended_repos_df)} repositories (total: {len(combined_df)}) to: {extended_file}")
-            else:
-                extended_repos_df.to_csv(extended_file, index=False)
-                print(f"✓ Saved extended repositories: {extended_file}")
+        extended_file = output_dir / "crypto_extended_repos_by_stars.csv"
+        extended_repos_df.to_csv(extended_file, index=False)
+        print(f"✓ Saved extended repositories: {extended_file}")
 
         return extended_repos
 
@@ -574,20 +617,9 @@ def find_extended_contributors(extended_repos, config):
     # Only save specified columns
     filtered_for_save = filtered_extended_contributors[['repository_name', 'contributor_handle']]
 
-    # Check if this is second degree (append mode) - check if file already has data
-    is_second_degree = extended_contrib_file.exists() and len(pd.read_csv(extended_contrib_file)) > 0
-
-    if is_second_degree and extended_contrib_file.exists():
-        # Append to existing file
-        existing_df = pd.read_csv(extended_contrib_file)
-        combined_df = pd.concat([existing_df, filtered_for_save], ignore_index=True)
-        # Remove duplicates
-        combined_df = combined_df.drop_duplicates(subset=['repository_name', 'contributor_handle'])
-        combined_df.to_csv(extended_contrib_file, index=False)
-        print(f"✓ Appended {len(filtered_for_save)} contributors (total: {len(combined_df)}) to: {extended_contrib_file}")
-    else:
-        filtered_for_save.to_csv(extended_contrib_file, index=False)
-        print(f"✓ Saved extended contributors: {extended_contrib_file}")
+    # Save extended contributors data
+    filtered_for_save.to_csv(extended_contrib_file, index=False)
+    print(f"✓ Saved extended contributors: {extended_contrib_file}")
 
     return filtered_extended_contributors
 
@@ -631,7 +663,7 @@ def main(config_path="config.toml"):
             extended_repos = extended_repos_df['repository_name'].tolist()
             print(f"✓ Loaded {len(extended_repos)} extended repositories from {extended_repos_file}")
         else:
-            extended_repos = find_extended_repos_by_stars(core_contributors, config, degree=1)
+            extended_repos = find_extended_repos_by_stars(core_contributors, config)
 
         # Step 4: Find extended contributors using repo_to_contributors
         extended_contrib_file = output_dir / "crypto_extended_contributors_by_stars.csv"
@@ -642,34 +674,7 @@ def main(config_path="config.toml"):
         else:
             extended_contributors_df = find_extended_contributors(extended_repos, config)
 
-        # Step 5 & 6: Second degree analysis (optional)
-        enable_second_degree = config.get('general', {}).get('enable_second_degree_analysis', True)
 
-        if enable_second_degree and not extended_contributors_df.empty:
-            # Check if we have a second degree marker file to avoid re-running
-            second_degree_marker = output_dir / ".second_degree_completed"
-
-            if second_degree_marker.exists():
-                print("✓ Step 5: Second degree analysis already completed, skipping...")
-                extended_repos_2 = []
-            else:
-                extended_contributors_list = extended_contributors_df['contributor_handle'].unique().tolist()
-                print(f"\nStarting second degree analysis with {len(extended_contributors_list)} contributors...")
-                extended_repos_2 = find_extended_repos_by_stars(extended_contributors_list, config, degree=2)
-
-            # Step 6: Find extended contributors second degree
-            if extended_repos_2:
-                print(f"Finding second degree contributors from {len(extended_repos_2)} repositories...")
-                extended_contributors_2_df = find_extended_contributors(extended_repos_2, config)
-                # Create marker file to indicate second degree completion
-                second_degree_marker.touch()
-                print("✓ Second degree analysis completed and marked")
-            elif not second_degree_marker.exists():
-                print("✓ Step 6: No second degree repos found")
-        elif not enable_second_degree:
-            print("✓ Second degree analysis disabled in configuration, skipping steps 5 & 6")
-        else:
-            print("✓ No extended contributors found, skipping second degree analysis")
 
     except KeyboardInterrupt:
         print("\n\n⏹️ Analysis cancelled by user")

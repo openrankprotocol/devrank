@@ -10,9 +10,6 @@ output_dir = "./raw"
 # Set to 0 to include all historical data
 days_back = 0  # 0 = all time, 365 = last year, 730 = last 2 years
 
-# Enable second degree analysis (finding repos from extended contributors)
-enable_second_degree_analysis = false
-
 # List of seed organizations to analyze
 # All repositories from these organizations will be included
 seed_orgs = [
@@ -33,9 +30,9 @@ seed_orgs = [
 # Minimum commits threshold for all analysis (repositories, core contributors, extended contributors)
 min_commits = 10
 # Minimum core contributors threshold for all analysis (seed repos, extended repos, all phases)
-min_core_contributors = 2
+min_core_contributors = 10
 # Repository filtering - get top repos sorted by stars
-max_repos_per_org = 200
+max_repos_per_org = 50
 
 [filters]
 # Repository filters

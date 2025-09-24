@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """
-Generate Local Trust Relationships from OSO Database (Optimized Version)
+Trust Relationship Generator
 
-This script uses the pipeline files to identify user-repo pairs, then efficiently
-queries OSO database for trust relationships with optimized batching and queries.
+This script calculates trust relationships between contributors based on
+their shared repository contributions using the Open Source Observer (OSO) database.
+
+Prerequisites:
+1. Create account at www.opensource.observer
+2. Generate API key in Account Settings > API Keys
+3. Set OSO_API_KEY environment variable or in .env file
+4. Install dependencies: pip install pyoso pandas python-dotenv
+
+Usage:
+    python generate_trust.py
 """
 
 import os
@@ -19,50 +28,6 @@ try:
 except ImportError:
     pass
 
-def load_user_repo_pairs():
-    """Load user-repo pairs efficiently from CSV files."""
-    print("Loading user-repo pairs from raw files...")
-
-    raw_dir = Path("raw")
-    if not raw_dir.exists():
-        print(f"ERROR: {raw_dir} directory not found!")
-        return set(), set()
-
-    user_repo_pairs = set()
-    all_repos = set()
-
-    # Load repositories efficiently using pandas
-    for file_name, repo_col in [
-        ("crypto_seed_repos.csv", "repository_name"),
-        ("crypto_extended_repos_by_stars.csv", "repository_name")
-    ]:
-        file_path = raw_dir / file_name
-        if file_path.exists():
-            df = pd.read_csv(file_path, usecols=[repo_col])
-            repos = set(df[repo_col].dropna().tolist())
-            all_repos.update(repos)
-            print(f"  Loaded {len(repos)} repositories from {file_name}")
-
-    print(f"  Total unique repositories: {len(all_repos)}")
-
-    # Load user-repo pairs efficiently
-    for file_name, user_col, repo_col in [
-        ("repo_contributors.csv", "contributor_handle", "repository_name"),
-        ("crypto_extended_contributors_by_stars.csv", "contributor_handle", "repository_name")
-    ]:
-        file_path = raw_dir / file_name
-        if file_path.exists():
-            df = pd.read_csv(file_path, usecols=[user_col, repo_col])
-            # Vectorized filtering
-            df = df.dropna()
-            df = df[df[repo_col].isin(all_repos)]
-
-            pairs = set(zip(df[user_col], df[repo_col]))
-            user_repo_pairs.update(pairs)
-            print(f"  Loaded {len(pairs)} pairs from {file_name}")
-
-    print(f"Total unique user-repo pairs: {len(user_repo_pairs)}")
-    return user_repo_pairs, all_repos
 
 def build_user_to_repo_query(users_str, repo_condition_str):
     """Build simplified user-to-repo trust query."""
@@ -123,8 +88,58 @@ def build_repo_to_user_query(users_str, repo_condition_str):
     HAVING SUM(e.amount) > 0
     """
 
+def load_user_repo_pairs():
+    """Load user-repo pairs efficiently from CSV files."""
+    print("Loading user-repo pairs from raw files...")
+
+    raw_dir = Path("raw")
+    if not raw_dir.exists():
+        print(f"ERROR: {raw_dir} directory not found!")
+        return set(), set()
+
+    user_repo_pairs = set()
+    all_repos = set()
+
+    # Load repositories efficiently using pandas
+    for file_name, repo_col in [
+        ("crypto_seed_repos.csv", "repository_name"),
+        ("crypto_extended_repos_by_stars.csv", "repository_name")
+    ]:
+        file_path = raw_dir / file_name
+        if file_path.exists():
+            df = pd.read_csv(file_path, usecols=[repo_col])
+            repos = set(df[repo_col].dropna().tolist())
+            all_repos.update(repos)
+            print(f"  Loaded {len(repos)} repositories from {file_name}")
+
+    print(f"  Total unique repositories: {len(all_repos)}")
+
+    # Load user-repo pairs efficiently
+    for file_name, user_col, repo_col in [
+        ("repo_contributors.csv", "contributor_handle", "repository_name"),
+        ("crypto_extended_contributors_by_stars.csv", "contributor_handle", "repository_name")
+    ]:
+        file_path = raw_dir / file_name
+        if file_path.exists():
+            df = pd.read_csv(file_path, usecols=[user_col, repo_col])
+            # Vectorized filtering
+            df = df.dropna()
+            df = df[df[repo_col].isin(all_repos)]
+
+            pairs = set(zip(df[user_col], df[repo_col]))
+            user_repo_pairs.update(pairs)
+            print(f"  Loaded {len(pairs)} pairs from {file_name}")
+
+    print(f"Total unique user-repo pairs: {len(user_repo_pairs)}")
+    return user_repo_pairs, all_repos
+
 def process_batch_optimized(batch_pairs, client):
     """Process a batch of user-repo pairs with separate simpler queries."""
+    import time
+
+    # Add delay to avoid rate limiting
+    time.sleep(0.5)
+
     # Extract users and repos from batch
     users_in_batch = set()
     repos_in_batch = set()
@@ -148,7 +163,6 @@ def process_batch_optimized(batch_pairs, client):
         return pd.DataFrame()
 
     repo_condition_str = " OR ".join(repo_conditions)
-
     results = []
 
     # Execute user-to-repo query
@@ -193,24 +207,32 @@ def process_batch_wrapper(batch_info):
     try:
         client = create_client()
     except Exception as e:
+        print(f"    ✗ Batch {batch_num}: Failed to create client: {e}")
         return batch_num, None, f"Failed to create client: {e}"
 
     print(f"  Processing batch {batch_num}/{total_batches} ({len(batch_pairs)} pairs)...")
 
-    # Process batch with optimized query
-    batch_df = process_batch_optimized(batch_pairs, client)
+    # Process batch with optimized query and comprehensive error handling
+    try:
+        batch_df = process_batch_optimized(batch_pairs, client)
 
-    if not batch_df.empty:
-        # Round trust values
-        batch_df['v'] = batch_df['v'].round(6)
-        print(f"    ✓ Batch {batch_num}: Found {len(batch_df)} relationships")
-        return batch_num, batch_df, None
-    else:
-        print(f"    Batch {batch_num}: No relationships found")
-        return batch_num, None, None
+        if not batch_df.empty:
+            # Round trust values
+            batch_df['v'] = batch_df['v'].round(6)
+            print(f"    ✓ Batch {batch_num}: Found {len(batch_df)} relationships")
+            return batch_num, batch_df, None
+        else:
+            print(f"    ✓ Batch {batch_num}: No relationships found")
+            return batch_num, None, None
+
+    except Exception as e:
+        import traceback
+        error_msg = f"Batch processing failed: {str(e)}"
+        print(f"    ✗ Batch {batch_num}: {error_msg}")
+        return batch_num, None, error_msg
 
 def generate_trust_relationships():
-    """Generate trust relationships with optimized processing."""
+    """Generate trust relationships with simple job queue processing."""
 
     # Get API key
     api_key = os.getenv('OSO_API_KEY')
@@ -243,65 +265,68 @@ def generate_trust_relationships():
 
     # Convert to list for batch processing
     pairs_list = list(user_repo_pairs)
-
-    # Use smaller batches to avoid compiler limits
     batch_size = 250
-    total_batches = (len(pairs_list) - 1) // batch_size + 1
+    total_batches = (len(pairs_list) + batch_size - 1) // batch_size
 
     print(f"Processing {len(pairs_list)} user-repo pairs in {total_batches} batches of {batch_size}...")
-    print("Using parallel processing with up to 4 concurrent batches...")
+    print("Using simple job queue processing 4 batches at a time...")
 
     # Initialize output
     output_file = trust_dir / "github.csv"
     all_results = []
 
-    # Prepare batch jobs
-    batch_jobs = []
+    # Create job queue
+    job_queue = []
     for batch_start in range(0, len(pairs_list), batch_size):
         batch_pairs = pairs_list[batch_start:batch_start + batch_size]
         batch_num = batch_start // batch_size + 1
-        batch_jobs.append((batch_num, batch_pairs, total_batches))
+        job_queue.append((batch_num, batch_pairs, total_batches))
 
     try:
-        # Process batches in parallel using ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            # Submit all batch jobs
-            future_to_batch = {executor.submit(process_batch_wrapper, batch_job): batch_job[0]
-                             for batch_job in batch_jobs}
+        # Process jobs in queue, 4 at a time
+        while job_queue:
+            # Take up to 4 jobs from queue
+            current_jobs = job_queue[:4]
+            job_queue = job_queue[4:]
 
-            completed_batches = 0
+            print(f"Processing {len(current_jobs)} batches (remaining: {len(job_queue)})...")
 
-            # Process completed batches as they finish
-            for future in as_completed(future_to_batch):
-                batch_num, batch_df, error = future.result()
-                completed_batches += 1
+            # Process current batch of jobs with ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_job = {executor.submit(process_batch_wrapper, job): job for job in current_jobs}
 
-                if error:
-                    print(f"    ✗ Batch {batch_num} failed: {error}")
-                    continue
+                successful_jobs = []
+                failed_jobs = []
 
-                if batch_df is not None:
-                    all_results.append(batch_df)
+                for future in as_completed(future_to_job):
+                    job = future_to_job[future]
+                    try:
+                        batch_num, batch_df, error = future.result()
 
-                # Save intermediate results every 10 completed batches
-                if completed_batches % 10 == 0 or completed_batches == total_batches:
-                    if all_results:
-                        print(f"    Saving intermediate results after {completed_batches} batches...")
-                        combined_df = pd.concat(all_results, ignore_index=True)
+                        if error:
+                            print(f"    ✗ Batch {batch_num} failed: {error}")
+                            failed_jobs.append(job)
+                        else:
+                            successful_jobs.append(job)
+                            if batch_df is not None:
+                                all_results.append(batch_df)
+                    except Exception as e:
+                        batch_num = job[0]
+                        error_msg = str(e)
+                        if "Expecting value" in error_msg:
+                            print(f"    ✗ Batch {batch_num} failed: API returned empty response (likely rate limited)")
+                        else:
+                            print(f"    ✗ Batch {batch_num} failed: {error_msg}")
+                        failed_jobs.append(job)
 
-                        # Remove duplicates and aggregate if needed
-                        combined_df = combined_df.groupby(['i', 'j'], as_index=False)['v'].sum()
-                        combined_df['v'] = combined_df['v'].round(6)
-
-                        # Write to file (overwrite mode for simplicity)
-                        combined_df.to_csv(output_file, index=False, mode='w')
-                        print(f"    ✓ Saved {len(combined_df)} total relationships to {output_file}")
-
-                        # Keep only final result in memory
-                        all_results = [combined_df]
+            # Add failed jobs back to the end of the queue for retry
+            if failed_jobs:
+                print(f"    Adding {len(failed_jobs)} failed batches back to queue for retry")
+                job_queue.extend(failed_jobs)
 
         # Final save with complete aggregation
         if all_results:
+            print(f"\n💾 Saving final results from {len(all_results)} successful batches...")
             final_df = pd.concat(all_results, ignore_index=True)
             final_df = final_df.groupby(['i', 'j'], as_index=False)['v'].sum()
             final_df['v'] = final_df['v'].round(6)
@@ -310,13 +335,17 @@ def generate_trust_relationships():
             final_df = final_df[final_df['v'] >= 0.1]
 
             final_df.to_csv(output_file, index=False, mode='w')
-            print(f"\n✓ Final results: {len(final_df)} trust relationships saved to {output_file}")
+            print(f"✓ Final results: {len(final_df)} trust relationships saved to {output_file}")
         else:
-            print("No trust relationships found!")
+            print("❌ No trust relationships found!")
 
     except Exception as e:
         print(f"ERROR: Processing failed: {e}")
         return
 
+
 if __name__ == "__main__":
-    generate_trust_relationships()
+    try:
+        generate_trust_relationships()
+    except Exception as e:
+        print(f"ERROR: Processing failed: {e}")
