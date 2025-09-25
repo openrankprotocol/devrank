@@ -72,7 +72,7 @@ def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_or
     # Build date filter
     date_filter = ""
     if date_filter_days > 0:
-        from datetime import timedelta
+        from datetime import datetime, timedelta
         cutoff_date = datetime.now() - timedelta(days=date_filter_days)
         date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
 

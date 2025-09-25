@@ -384,6 +384,14 @@ def find_extended_repos_by_stars(core_contributors, config):
     # Build contributors filter
     contributors_str = "', '".join([c.replace("'", "''") for c in core_contributors])
 
+    # Build date filter
+    date_filter = ""
+    date_filter_days = config.get("general", {}).get("days_back", 0)
+    if date_filter_days > 0:
+        from datetime import datetime, timedelta
+        cutoff_date = datetime.now() - timedelta(days=date_filter_days)
+        date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
+
     try:
         # Find all repos that core contributors worked on
         repos_query = f"""
@@ -398,8 +406,7 @@ def find_extended_repos_by_stars(core_contributors, config):
           AND e.event_type = 'COMMIT_CODE'
           AND u.artifact_name NOT LIKE '%[bot]'
           AND u.artifact_name NOT LIKE '%-bot'
-          AND e.bucket_day >= DATE '2020-01-01'
-          AND e.bucket_day <= DATE '2024-06-27'
+          {date_filter}
           AND p.artifact_source = 'GITHUB'
         """
 
@@ -480,6 +487,7 @@ def find_extended_repos_by_stars(core_contributors, config):
                       AND u.artifact_name NOT LIKE '%[bot]'
                       AND u.artifact_name NOT LIKE '%-bot'
                       AND p.artifact_source = 'GITHUB'
+                      {date_filter}
                     GROUP BY p.artifact_id, p.artifact_namespace, p.artifact_name, u.artifact_name
                     HAVING SUM(e.amount) >= {min_commits}
                 ),
@@ -505,6 +513,7 @@ def find_extended_repos_by_stars(core_contributors, config):
                     WHERE ({org_condition_str})
                       AND e.event_type = 'STARRED'
                       AND p.artifact_source = 'GITHUB'
+                      {date_filter}
                     GROUP BY p.artifact_namespace, p.artifact_name
                 )
                 SELECT org_name, repo_name, repository_name, total_stars

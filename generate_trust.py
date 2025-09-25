@@ -19,8 +19,6 @@ import os
 import sys
 import pandas as pd
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
 
 try:
     from dotenv import load_dotenv
@@ -29,7 +27,7 @@ except ImportError:
     pass
 
 
-def build_user_to_repo_query(users_str, repo_condition_str):
+def build_user_to_repo_query(users_str, repo_condition_str, date_filter=""):
     """Build simplified user-to-repo trust query."""
     return f"""
     SELECT
@@ -56,11 +54,12 @@ def build_user_to_repo_query(users_str, repo_condition_str):
       AND u.artifact_name NOT LIKE '%[bot]'
       AND u.artifact_name NOT LIKE '%-bot'
       AND p.artifact_source = 'GITHUB'
+      {date_filter}
     GROUP BY u.artifact_name, CONCAT(p.artifact_namespace, '/', p.artifact_name)
     HAVING SUM(e.amount) > 0
     """
 
-def build_repo_to_user_query(users_str, repo_condition_str):
+def build_repo_to_user_query(users_str, repo_condition_str, date_filter=""):
     """Build simplified repo-to-user trust query."""
     return f"""
     SELECT
@@ -84,6 +83,7 @@ def build_repo_to_user_query(users_str, repo_condition_str):
       AND u.artifact_name NOT LIKE '%[bot]'
       AND u.artifact_name NOT LIKE '%-bot'
       AND p.artifact_source = 'GITHUB'
+      {date_filter}
     GROUP BY CONCAT(p.artifact_namespace, '/', p.artifact_name), u.artifact_name
     HAVING SUM(e.amount) > 0
     """
@@ -133,13 +133,9 @@ def load_user_repo_pairs():
     print(f"Total unique user-repo pairs: {len(user_repo_pairs)}")
     return user_repo_pairs, all_repos
 
-def process_batch_optimized(batch_pairs, client):
+def process_batch_optimized(batch_pairs, client, date_filter=""):
     """Process a batch of user-repo pairs with separate simpler queries."""
     import time
-
-    # Add delay to avoid rate limiting
-    time.sleep(0.5)
-
     # Extract users and repos from batch
     users_in_batch = set()
     repos_in_batch = set()
@@ -167,7 +163,7 @@ def process_batch_optimized(batch_pairs, client):
 
     # Execute user-to-repo query
     try:
-        user_to_repo_query = build_user_to_repo_query(users_str, repo_condition_str)
+        user_to_repo_query = build_user_to_repo_query(users_str, repo_condition_str, date_filter)
         batch_df1 = client.to_pandas(user_to_repo_query)
         if not batch_df1.empty:
             results.append(batch_df1)
@@ -176,7 +172,7 @@ def process_batch_optimized(batch_pairs, client):
 
     # Execute repo-to-user query
     try:
-        repo_to_user_query = build_repo_to_user_query(users_str, repo_condition_str)
+        repo_to_user_query = build_repo_to_user_query(users_str, repo_condition_str, date_filter)
         batch_df2 = client.to_pandas(repo_to_user_query)
         if not batch_df2.empty:
             results.append(batch_df2)
@@ -199,8 +195,8 @@ def create_client():
     os.environ["OSO_API_KEY"] = api_key
     return pyoso.Client()
 
-def process_batch_wrapper(batch_info):
-    """Wrapper function for parallel batch processing."""
+def process_batch_wrapper_with_date_filter(batch_info, date_filter):
+    """Wrapper function for batch processing with date filter."""
     batch_num, batch_pairs, total_batches = batch_info
 
     # Create a new client for this thread
@@ -214,7 +210,7 @@ def process_batch_wrapper(batch_info):
 
     # Process batch with optimized query and comprehensive error handling
     try:
-        batch_df = process_batch_optimized(batch_pairs, client)
+        batch_df = process_batch_optimized(batch_pairs, client, date_filter)
 
         if not batch_df.empty:
             # Round trust values
@@ -239,6 +235,26 @@ def generate_trust_relationships():
     if not api_key:
         print("ERROR: OSO API key required. Set OSO_API_KEY environment variable.")
         sys.exit(1)
+
+    # Load config for days_back
+    import tomli
+    try:
+        with open("config.toml", "rb") as f:
+            config = tomli.load(f)
+    except FileNotFoundError:
+        print("Warning: config.toml not found, using default settings")
+        config = {}
+
+    # Build date filter
+    date_filter = ""
+    days_back = config.get("general", {}).get("days_back", 0)
+    if days_back > 0:
+        from datetime import datetime, timedelta
+        cutoff_date = datetime.now() - timedelta(days=days_back)
+        date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
+        print(f"Using date filter: last {days_back} days (from {cutoff_date.strftime('%Y-%m-%d')})")
+    else:
+        print("Using all historical data (no date filter)")
 
     # Initialize client
     try:
@@ -269,7 +285,7 @@ def generate_trust_relationships():
     total_batches = (len(pairs_list) + batch_size - 1) // batch_size
 
     print(f"Processing {len(pairs_list)} user-repo pairs in {total_batches} batches of {batch_size}...")
-    print("Using simple job queue processing 4 batches at a time...")
+    print("Using sequential processing with retry queue...")
 
     # Initialize output
     output_file = trust_dir / "github.csv"
@@ -283,46 +299,34 @@ def generate_trust_relationships():
         job_queue.append((batch_num, batch_pairs, total_batches))
 
     try:
-        # Process jobs in queue, 4 at a time
+        # Process jobs in queue sequentially
         while job_queue:
-            # Take up to 4 jobs from queue
-            current_jobs = job_queue[:4]
-            job_queue = job_queue[4:]
+            # Take one job from queue
+            current_job = job_queue.pop(0)
+            batch_num, batch_pairs, total_batches = current_job
 
-            print(f"Processing {len(current_jobs)} batches (remaining: {len(job_queue)})...")
+            # Process single job with date filter
+            try:
+                # Pass date_filter to process_batch_wrapper
+                batch_num, batch_df, error = process_batch_wrapper_with_date_filter(current_job, date_filter)
 
-            # Process current batch of jobs with ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                future_to_job = {executor.submit(process_batch_wrapper, job): job for job in current_jobs}
-
-                successful_jobs = []
-                failed_jobs = []
-
-                for future in as_completed(future_to_job):
-                    job = future_to_job[future]
-                    try:
-                        batch_num, batch_df, error = future.result()
-
-                        if error:
-                            print(f"    ✗ Batch {batch_num} failed: {error}")
-                            failed_jobs.append(job)
-                        else:
-                            successful_jobs.append(job)
-                            if batch_df is not None:
-                                all_results.append(batch_df)
-                    except Exception as e:
-                        batch_num = job[0]
-                        error_msg = str(e)
-                        if "Expecting value" in error_msg:
-                            print(f"    ✗ Batch {batch_num} failed: API returned empty response (likely rate limited)")
-                        else:
-                            print(f"    ✗ Batch {batch_num} failed: {error_msg}")
-                        failed_jobs.append(job)
-
-            # Add failed jobs back to the end of the queue for retry
-            if failed_jobs:
-                print(f"    Adding {len(failed_jobs)} failed batches back to queue for retry")
-                job_queue.extend(failed_jobs)
+                if error:
+                    print(f"    ✗ Batch {batch_num} failed: {error}")
+                    # Add failed job back to the end of the queue for retry
+                    print(f"    Adding batch {batch_num} back to queue for retry")
+                    job_queue.append(current_job)
+                else:
+                    if batch_df is not None:
+                        all_results.append(batch_df)
+            except Exception as e:
+                error_msg = str(e)
+                if "Expecting value" in error_msg:
+                    print(f"    ✗ Batch {batch_num} failed: API returned empty response (likely rate limited)")
+                else:
+                    print(f"    ✗ Batch {batch_num} failed: {error_msg}")
+                # Add failed job back to the end of the queue for retry
+                print(f"    Adding batch {batch_num} back to queue for retry")
+                job_queue.append(current_job)
 
         # Final save with complete aggregation
         if all_results:

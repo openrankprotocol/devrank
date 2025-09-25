@@ -90,9 +90,7 @@ exclude_archived = false
 exclude_bots = false  # Set to true to exclude bot accounts
 bot_keywords = ["bot", "dependabot", "mergify", "renovate", "github-actions"]
 
-# Date filters (overrides days_back if set)
-start_date = ""  # Format: "2020-01-01" or empty for no limit
-end_date = ""    # Format: "2024-12-31" or empty for no limit
+# Date filter - uses days_back from [general] section
 
 [output]
 # Output file naming
@@ -129,7 +127,8 @@ The graph builder uses your existing `config.toml` settings and can be enabled i
 
 ```toml
 [output]
-save_network_graph_data = true  # Enable graph data generation
+include_headers = true
+include_timestamp_in_filename = false
 ```
 
 ### Usage Example
@@ -210,7 +209,7 @@ min_commits = 10
 
 [filters]
 exclude_bots = true
-start_date = "2020-01-01"  # DeFi boom period
+# Uses days_back from [general] section for date filtering
 ```
 
 ### Layer 2 Ecosystem
