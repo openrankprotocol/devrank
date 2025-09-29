@@ -30,8 +30,31 @@ try:
 except ImportError:
     pass
 
+def build_filter_conditions(config):
+    """Build SQL filter conditions from config.toml filters"""
+    filters = config.get("filters", {})
 
-def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_org_repos=True, date_filter_days=0):
+    # Bot filtering
+    bot_conditions = []
+    if filters.get("exclude_bots", True):
+        bot_keywords = filters.get("bot_keywords", ["bot", "dependabot", "mergify", "renovate", "github-actions", "semantic-release"])
+        for keyword in bot_keywords:
+            bot_conditions.extend([
+                f"u.artifact_name NOT LIKE '%{keyword}%'",
+                f"u.artifact_name NOT LIKE '%[{keyword}]%'"
+            ])
+        # Add generic bot patterns
+        bot_conditions.extend([
+            "u.artifact_name NOT LIKE '%[bot]'",
+            "u.artifact_name NOT LIKE '%-bot'"
+        ])
+
+    return {
+        'bot_filter': ' AND '.join(bot_conditions) if bot_conditions else '',
+    }
+
+
+def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_org_repos=True, date_filter_days=0, config=None):
     """
     Find all repositories for given contributors, plus organization repositories.
 
@@ -76,6 +99,10 @@ def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_or
         cutoff_date = datetime.now() - timedelta(days=date_filter_days)
         date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
 
+    # Build filter conditions from config
+    filter_conditions = build_filter_conditions(config or {})
+    bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions['bot_filter'] else ""
+
     # Build contributor conditions
     contributors_str = "', '".join([c.replace("'", "''") for c in contributor_identifiers])
 
@@ -104,6 +131,7 @@ def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_or
           AND u.artifact_name IN ('{contributors_str}')
           AND u.artifact_name IS NOT NULL
           AND u.artifact_name != ''
+          {bot_filter}
           AND p.artifact_namespace IS NOT NULL
           AND p.artifact_name IS NOT NULL
           {date_filter}

@@ -20,8 +20,6 @@ import sys
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
 
 try:
     from dotenv import load_dotenv
@@ -29,8 +27,31 @@ try:
 except ImportError:
     pass
 
+def build_filter_conditions(config):
+    """Build SQL filter conditions from config.toml filters"""
+    filters = config.get("filters", {})
 
-def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=0):
+    # Bot filtering
+    bot_conditions = []
+    if filters.get("exclude_bots", True):
+        bot_keywords = filters.get("bot_keywords", ["bot", "dependabot", "mergify", "renovate", "github-actions", "semantic-release"])
+        for keyword in bot_keywords:
+            bot_conditions.extend([
+                f"u.artifact_name NOT LIKE '%{keyword}%'",
+                f"u.artifact_name NOT LIKE '%[{keyword}]%'"
+            ])
+        # Add generic bot patterns
+        bot_conditions.extend([
+            "u.artifact_name NOT LIKE '%[bot]'",
+            "u.artifact_name NOT LIKE '%-bot'"
+        ])
+
+    return {
+        'bot_filter': ' AND '.join(bot_conditions) if bot_conditions else '',
+    }
+
+
+def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=0, config=None):
     """
     Find all contributors for given repositories.
 
@@ -38,6 +59,7 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
         repo_identifiers (list): List of repo identifiers in format ["org/repo", "org/repo"]
         min_commits (int): Minimum number of commits to be considered a contributor
         date_filter_days (int): Number of days back to consider (0 = all time)
+        config (dict): Configuration dictionary for filters
 
     Returns:
         pd.DataFrame: Contributors data with columns:
@@ -68,6 +90,10 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
         cutoff_date = datetime.now() - timedelta(days=date_filter_days)
         date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
 
+    # Build filter conditions from config
+    filter_conditions = build_filter_conditions(config or {})
+    bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions['bot_filter'] else ""
+
     # Process repositories in batches with parallel processing
     batch_size = 100
     batches = []
@@ -77,34 +103,28 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
         batch_repos = repo_identifiers[i:i+batch_size]
         batches.append((i//batch_size + 1, batch_repos))
 
-    max_workers = min(4, len(batches))
-    print(f"Processing {len(batches)} batches in parallel using {max_workers} workers...")
+    print(f"Processing {len(batches)} batches sequentially...")
 
     from datetime import datetime
     start_time = datetime.now()
 
-    # Thread-local storage for clients
-    thread_local = threading.local()
+    # Initialize client
+    try:
+        import pyoso
+        os.environ["OSO_API_KEY"] = api_key
+        client = pyoso.Client()
+    except ImportError:
+        print("ERROR: Install pyoso with: pip install pyoso pandas python-dotenv")
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: Failed to initialize OSO client: {e}")
+        sys.exit(1)
 
-    def get_client():
-        """Get thread-local OSO client"""
-        if not hasattr(thread_local, 'client'):
-            try:
-                import pyoso
-                os.environ["OSO_API_KEY"] = api_key
-                thread_local.client = pyoso.Client()
-            except ImportError:
-                print("ERROR: Install pyoso with: pip install pyoso pandas python-dotenv")
-                sys.exit(1)
-            except Exception as e:
-                print(f"ERROR: Failed to initialize OSO client: {e}")
-                sys.exit(1)
-        return thread_local.client
-
-    def process_batch(batch_info):
-        """Process a single batch of repositories"""
-        batch_num, batch_repos = batch_info
-        client = get_client()
+    # Process batches sequentially
+    all_contributors = []
+    for batch_num, batch_repos in batches:
+        import time
+        time.sleep(0.5)  # Add delay to avoid rate limiting
 
         print(f"  Processing batch {batch_num}/{len(batches)} ({len(batch_repos)} repositories)...")
 
@@ -118,7 +138,7 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
                 print(f"WARNING: Invalid repo format '{repo_id}', should be 'org/repo'")
 
         if not repo_conditions:
-            return pd.DataFrame()
+            continue
 
         repo_condition_str = " OR ".join(repo_conditions)
 
@@ -143,6 +163,7 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
               AND ({repo_condition_str})
               AND u.artifact_name IS NOT NULL
               AND u.artifact_name != ''
+              {bot_filter}
               {date_filter}
             GROUP BY p.artifact_namespace, p.artifact_name, u.artifact_name, u.artifact_id
             HAVING SUM(e.amount) >= {min_commits}
@@ -153,24 +174,13 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
 
             if not batch_contributors_df.empty:
                 print(f"    Batch {batch_num}: Found {len(batch_contributors_df)} contributor records")
-                return batch_contributors_df
+                all_contributors.append(batch_contributors_df)
             else:
                 print(f"    Batch {batch_num}: No contributors found")
-                return pd.DataFrame()
 
         except Exception as e:
             print(f"    ERROR: Batch {batch_num} query failed: {str(e)}")
-            return pd.DataFrame()
-
-    # Process batches in parallel (optimize thread count based on batch count)
-    all_contributors = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_batch = {executor.submit(process_batch, batch): batch for batch in batches}
-
-        for future in as_completed(future_to_batch):
-            batch_contributors_df = future.result()
-            if not batch_contributors_df.empty:
-                all_contributors.append(batch_contributors_df)
+            continue
 
     # Combine all batches
     end_time = datetime.now()
@@ -178,7 +188,7 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
 
     if all_contributors:
         contributors_df = pd.concat(all_contributors, ignore_index=True)
-        print(f"✓ Found {len(contributors_df)} contributor records in {duration:.1f}s using {max_workers} parallel workers")
+        print(f"✓ Found {len(contributors_df)} contributor records in {duration:.1f}s")
         return contributors_df
     else:
         print(f"✗ No contributors found for the specified repositories (completed in {duration:.1f}s)")

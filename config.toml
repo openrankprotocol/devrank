@@ -14,15 +14,14 @@ days_back = 730  # 0 = all time, 365 = last year, 730 = last 2 years
 # All repositories from these organizations will be included
 seed_orgs = [
     "ethereum",
-    "bitcoin",
-    "cosmos",
-    "paradigmxyz",
-    "compound-finance",
-    "smartcontractkit",
-    "uniswap",
-    "offchainlabs",
+    "OpenZeppelin",
+    "NomicFoundation",
     "foundry-rs",
-    "paritytech",
+    "metamask",
+    "ethers-io",
+    "smartcontractkit",
+    "ethereum-optimism",
+    "uniswap",
 ]
 
 # Analysis configuration
@@ -35,19 +34,6 @@ min_core_contributors = 5
 max_repos_per_org = 100
 
 [filters]
-# Repository filters
-exclude_archived = true
-exclude_forks = true
-
 # Contributor filters
 exclude_bots = true  # Set to true to exclude bot accounts
 bot_keywords = ["bot", "dependabot", "mergify", "renovate", "github-actions", "semantic-release"]
-
-[output]
-# Output file naming
-timestamp_format = "%Y%m%d_%H%M%S"
-file_prefix = "crypto"
-
-# CSV output options
-include_headers = true
-include_timestamp_in_filename = false

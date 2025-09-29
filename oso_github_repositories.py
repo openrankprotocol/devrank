@@ -31,14 +31,36 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 import importlib.util
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
+# Removed threading imports
 
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
+
+def build_filter_conditions(config):
+    """Build SQL filter conditions from config.toml filters"""
+    filters = config.get("filters", {})
+
+    # Bot filtering
+    bot_conditions = []
+    if filters.get("exclude_bots", True):
+        bot_keywords = filters.get("bot_keywords", ["bot", "dependabot", "mergify", "renovate", "github-actions", "semantic-release"])
+        for keyword in bot_keywords:
+            bot_conditions.extend([
+                f"u.artifact_name NOT LIKE '%{keyword}%'",
+                f"u.artifact_name NOT LIKE '%[{keyword}]%'"
+            ])
+        # Add generic bot patterns
+        bot_conditions.extend([
+            "u.artifact_name NOT LIKE '%[bot]'",
+            "u.artifact_name NOT LIKE '%-bot'"
+        ])
+
+    return {
+        'bot_filter': ' AND '.join(bot_conditions) if bot_conditions else '',
+    }
 
 try:
     import tomli
@@ -149,6 +171,10 @@ def discover_seed_repositories(config):
             min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
             min_commits = config.get("analysis", {}).get("min_commits", 10)
 
+            # Build filter conditions
+            filter_conditions = build_filter_conditions(config)
+            bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions['bot_filter'] else ""
+
             # Query to find repositories with minimum core contributors
             org_repos_query = f"""
             WITH contributor_commits AS (
@@ -164,8 +190,7 @@ def discover_seed_repositories(config):
                 WHERE p.artifact_source = 'GITHUB'
                   AND p.artifact_namespace = '{org}'
                   AND e.event_type = 'COMMIT_CODE'
-                  AND u.artifact_name NOT LIKE '%[bot]'
-                  AND u.artifact_name NOT LIKE '%-bot'
+                  {bot_filter}
                 GROUP BY p.artifact_id, p.artifact_namespace, p.artifact_name, u.artifact_name
                 HAVING SUM(e.amount) >= {min_commits}
             ),
@@ -254,7 +279,8 @@ def find_core_contributors(seed_repos, config):
     contributors_df = repo_to_contributors.get_contributors_by_repos(
         repo_identifiers=seed_repos,
         min_commits=min_commits,
-        date_filter_days=date_filter_days
+        date_filter_days=date_filter_days,
+        config=config
     )
 
     if contributors_df.empty:
@@ -297,7 +323,8 @@ def find_extended_ecosystem(core_contributors, config):
         contributor_identifiers=core_contributors,
         min_commits=min_commits,
         include_org_repos=include_org_repos,
-        date_filter_days=date_filter_days
+        date_filter_days=date_filter_days,
+        config=config
     )
 
     contributed_repos_df = repos_data['contributed_repos']
@@ -393,6 +420,10 @@ def find_extended_repos_by_stars(core_contributors, config):
         date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
 
     try:
+        # Build filter conditions
+        filter_conditions = build_filter_conditions(config)
+        bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions['bot_filter'] else ""
+
         # Find all repos that core contributors worked on
         repos_query = f"""
         SELECT DISTINCT
@@ -404,8 +435,7 @@ def find_extended_repos_by_stars(core_contributors, config):
         JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
         WHERE u.artifact_name IN ('{contributors_str}')
           AND e.event_type = 'COMMIT_CODE'
-          AND u.artifact_name NOT LIKE '%[bot]'
-          AND u.artifact_name NOT LIKE '%-bot'
+          {bot_filter}
           {date_filter}
           AND p.artifact_source = 'GITHUB'
         """
@@ -432,35 +462,25 @@ def find_extended_repos_by_stars(core_contributors, config):
             batch_num = batch_start // batch_size + 1
             batches.append((batch_num, batch_orgs))
 
-        max_workers = min(4, len(batches))
-        print(f"Processing {len(batches)} organization batches in parallel using {max_workers} workers...")
+        print(f"Processing {len(batches)} organization batches sequentially...")
 
         from datetime import datetime
         start_time = datetime.now()
 
-        # Thread-local storage for clients
-        thread_local = threading.local()
+        # Process batches sequentially
+        extended_repos = []
 
-        def get_client():
-            """Get thread-local OSO client"""
-            if not hasattr(thread_local, 'client'):
-                try:
-                    import pyoso
-                    os.environ["OSO_API_KEY"] = api_key
-                    thread_local.client = pyoso.Client()
-                except Exception as e:
-                    print(f"ERROR: Failed to initialize OSO client in thread: {e}")
-                    raise e
-            return thread_local.client
-
-        def process_org_batch(batch_info):
-            """Process a single batch of organizations"""
-            batch_num, batch_orgs = batch_info
-            batch_client = get_client()
+        for batch_num, batch_orgs in batches:
+            import time
+            time.sleep(0.5)  # Add delay to avoid rate limiting
 
             print(f"  Processing batch {batch_num}/{len(batches)} ({len(batch_orgs)} organizations)...")
 
             try:
+                # Build filter conditions
+                filter_conditions = build_filter_conditions(config)
+                bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions['bot_filter'] else ""
+
                 # Build org conditions for batch
                 org_conditions = []
                 for org in batch_orgs:
@@ -484,8 +504,7 @@ def find_extended_repos_by_stars(core_contributors, config):
                     JOIN int_github_users u ON e.from_artifact_id = u.artifact_id
                     WHERE ({org_condition_str})
                       AND e.event_type = 'COMMIT_CODE'
-                      AND u.artifact_name NOT LIKE '%[bot]'
-                      AND u.artifact_name NOT LIKE '%-bot'
+                      {bot_filter}
                       AND p.artifact_source = 'GITHUB'
                       {date_filter}
                     GROUP BY p.artifact_id, p.artifact_namespace, p.artifact_name, u.artifact_name
@@ -522,10 +541,11 @@ def find_extended_repos_by_stars(core_contributors, config):
                 ORDER BY org_name, total_stars DESC
                 """
 
-                batch_stars_df = batch_client.to_pandas(stars_query)
+                batch_stars_df = client.to_pandas(stars_query)
 
                 if not batch_stars_df.empty:
                     batch_repos = batch_stars_df['repository_name'].tolist()
+                    extended_repos.extend(batch_repos)
 
                     # Show summary by org
                     org_counts = batch_stars_df.groupby('org_name').size()
@@ -533,33 +553,16 @@ def find_extended_repos_by_stars(core_contributors, config):
                     for org, count in org_counts.items():
                         summary.append(f"{org}: {count}")
                     print(f"    Batch {batch_num}: Found repos for {', '.join(summary)}")
-                    return batch_repos
                 else:
                     print(f"    Batch {batch_num}: No repositories found")
-                    return []
 
             except Exception as e:
-                print(f"    ERROR: Batch {batch_num} query failed: {str(e)}")
-                return []
-
-        # Process batches in parallel
-        extended_repos = []
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_batch = {executor.submit(process_org_batch, batch): batch for batch in batches}
-
-            for future in as_completed(future_to_batch):
-                try:
-                    batch_repos = future.result()
-                    if batch_repos:
-                        extended_repos.extend(batch_repos)
-                except Exception as e:
-                    batch_num = future_to_batch.get(future, ("unknown",))[0]
-                    error_msg = str(e)
-                    if "Expecting value" in error_msg:
-                        print(f"    ✗ Batch {batch_num} thread failed: API returned empty response (likely rate limited)")
-                    else:
-                        print(f"    ✗ Thread failed for batch {batch_num}: {error_msg}")
-                    continue
+                error_msg = str(e)
+                if "Expecting value" in error_msg:
+                    print(f"    ERROR: Batch {batch_num} received empty JSON response (likely rate limited)")
+                else:
+                    print(f"    ERROR: Batch {batch_num} query failed: {error_msg}")
+                continue
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -569,7 +572,7 @@ def find_extended_repos_by_stars(core_contributors, config):
         # No limits - find as many repos as possible
         output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
 
-        print(f"✓ Found {len(extended_repos)} extended repositories in {duration:.1f}s using {max_workers} parallel workers")
+        print(f"✓ Found {len(extended_repos)} extended repositories in {duration:.1f}s")
 
         # Save extended repositories list
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -610,7 +613,8 @@ def find_extended_contributors(extended_repos, config):
     extended_contributors_df = repo_to_contributors.get_contributors_by_repos(
         repo_identifiers=extended_repos,
         min_commits=min_commits,
-        date_filter_days=date_filter_days
+        date_filter_days=date_filter_days,
+        config=config
     )
 
     if extended_contributors_df.empty:

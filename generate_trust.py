@@ -26,8 +26,31 @@ try:
 except ImportError:
     pass
 
+def build_filter_conditions(config):
+    """Build SQL filter conditions from config.toml filters"""
+    filters = config.get("filters", {})
 
-def build_user_to_repo_query(users_str, repo_condition_str, date_filter=""):
+    # Bot filtering
+    bot_conditions = []
+    if filters.get("exclude_bots", True):
+        bot_keywords = filters.get("bot_keywords", ["bot", "dependabot", "mergify", "renovate", "github-actions", "semantic-release"])
+        for keyword in bot_keywords:
+            bot_conditions.extend([
+                f"u.artifact_name NOT LIKE '%{keyword}%'",
+                f"u.artifact_name NOT LIKE '%[{keyword}]%'"
+            ])
+        # Add generic bot patterns
+        bot_conditions.extend([
+            "u.artifact_name NOT LIKE '%[bot]'",
+            "u.artifact_name NOT LIKE '%-bot'"
+        ])
+
+    return {
+        'bot_filter': ' AND '.join(bot_conditions) if bot_conditions else '',
+    }
+
+
+def build_user_to_repo_query(users_str, repo_condition_str, date_filter="", bot_filter=""):
     """Build simplified user-to-repo trust query."""
     return f"""
     SELECT
@@ -51,15 +74,14 @@ def build_user_to_repo_query(users_str, repo_condition_str, date_filter=""):
     WHERE u.artifact_name IN ('{users_str}')
       AND ({repo_condition_str})
       AND e.event_type IN ('COMMIT_CODE', 'PULL_REQUEST_OPENED', 'PULL_REQUEST_MERGED', 'STARRED', 'ISSUE_OPENED', 'FORKED')
-      AND u.artifact_name NOT LIKE '%[bot]'
-      AND u.artifact_name NOT LIKE '%-bot'
+      {bot_filter}
       AND p.artifact_source = 'GITHUB'
       {date_filter}
     GROUP BY u.artifact_name, CONCAT(p.artifact_namespace, '/', p.artifact_name)
     HAVING SUM(e.amount) > 0
     """
 
-def build_repo_to_user_query(users_str, repo_condition_str, date_filter=""):
+def build_repo_to_user_query(users_str, repo_condition_str, date_filter="", bot_filter=""):
     """Build simplified repo-to-user trust query."""
     return f"""
     SELECT
@@ -80,8 +102,7 @@ def build_repo_to_user_query(users_str, repo_condition_str, date_filter=""):
     WHERE u.artifact_name IN ('{users_str}')
       AND ({repo_condition_str})
       AND e.event_type IN ('COMMIT_CODE', 'PULL_REQUEST_OPENED', 'PULL_REQUEST_MERGED')
-      AND u.artifact_name NOT LIKE '%[bot]'
-      AND u.artifact_name NOT LIKE '%-bot'
+      {bot_filter}
       AND p.artifact_source = 'GITHUB'
       {date_filter}
     GROUP BY CONCAT(p.artifact_namespace, '/', p.artifact_name), u.artifact_name
@@ -133,9 +154,14 @@ def load_user_repo_pairs():
     print(f"Total unique user-repo pairs: {len(user_repo_pairs)}")
     return user_repo_pairs, all_repos
 
-def process_batch_optimized(batch_pairs, client, date_filter=""):
+def process_batch_optimized(batch_pairs, client, date_filter="", config=None):
     """Process a batch of user-repo pairs with separate simpler queries."""
     import time
+
+    # Build filter conditions from config
+    filter_conditions = build_filter_conditions(config or {})
+    bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions['bot_filter'] else ""
+
     # Extract users and repos from batch
     users_in_batch = set()
     repos_in_batch = set()
@@ -163,7 +189,7 @@ def process_batch_optimized(batch_pairs, client, date_filter=""):
 
     # Execute user-to-repo query
     try:
-        user_to_repo_query = build_user_to_repo_query(users_str, repo_condition_str, date_filter)
+        user_to_repo_query = build_user_to_repo_query(users_str, repo_condition_str, date_filter, bot_filter)
         batch_df1 = client.to_pandas(user_to_repo_query)
         if not batch_df1.empty:
             results.append(batch_df1)
@@ -172,7 +198,7 @@ def process_batch_optimized(batch_pairs, client, date_filter=""):
 
     # Execute repo-to-user query
     try:
-        repo_to_user_query = build_repo_to_user_query(users_str, repo_condition_str, date_filter)
+        repo_to_user_query = build_repo_to_user_query(users_str, repo_condition_str, date_filter, bot_filter)
         batch_df2 = client.to_pandas(repo_to_user_query)
         if not batch_df2.empty:
             results.append(batch_df2)
@@ -195,7 +221,7 @@ def create_client():
     os.environ["OSO_API_KEY"] = api_key
     return pyoso.Client()
 
-def process_batch_wrapper_with_date_filter(batch_info, date_filter):
+def process_batch_wrapper_with_date_filter(batch_info, date_filter, config=None):
     """Wrapper function for batch processing with date filter."""
     batch_num, batch_pairs, total_batches = batch_info
 
@@ -210,7 +236,7 @@ def process_batch_wrapper_with_date_filter(batch_info, date_filter):
 
     # Process batch with optimized query and comprehensive error handling
     try:
-        batch_df = process_batch_optimized(batch_pairs, client, date_filter)
+        batch_df = process_batch_optimized(batch_pairs, client, date_filter, config)
 
         if not batch_df.empty:
             # Round trust values
@@ -307,8 +333,8 @@ def generate_trust_relationships():
 
             # Process single job with date filter
             try:
-                # Pass date_filter to process_batch_wrapper
-                batch_num, batch_df, error = process_batch_wrapper_with_date_filter(current_job, date_filter)
+                # Pass date_filter and config to process_batch_wrapper
+                batch_num, batch_df, error = process_batch_wrapper_with_date_filter(current_job, date_filter, config)
 
                 if error:
                     print(f"    ✗ Batch {batch_num} failed: {error}")
