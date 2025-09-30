@@ -170,10 +170,18 @@ def discover_seed_repositories(config):
             # Get filtering parameters
             min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
             min_commits = config.get("analysis", {}).get("min_commits", 10)
+            days_back = config.get("general", {}).get("days_back", 0)
 
             # Build filter conditions
             filter_conditions = build_filter_conditions(config)
             bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions['bot_filter'] else ""
+
+            # Add time filter if days_back is specified
+            time_filter = ""
+            if days_back > 0:
+                from datetime import datetime, timedelta
+                cutoff_date = datetime.now() - timedelta(days=days_back)
+                time_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
 
             # Query to find repositories with minimum core contributors
             org_repos_query = f"""
@@ -191,6 +199,7 @@ def discover_seed_repositories(config):
                   AND p.artifact_namespace = '{org}'
                   AND e.event_type = 'COMMIT_CODE'
                   {bot_filter}
+                  {time_filter}
                 GROUP BY p.artifact_id, p.artifact_namespace, p.artifact_name, u.artifact_name
                 HAVING SUM(e.amount) >= {min_commits}
             ),
@@ -223,7 +232,12 @@ def discover_seed_repositories(config):
                 print(f"    No repositories found for {org}")
 
         except Exception as e:
-            print(f"    Error finding repositories for {org}: {e}")
+            # Handle pyoso exceptions that may have JSON parsing issues when converted to string
+            try:
+                error_msg = str(e)
+            except Exception:
+                error_msg = f"{type(e).__name__}: Unable to parse error message"
+            print(f"    Error finding repositories for {org}: {error_msg}")
             continue
 
     # Remove duplicates

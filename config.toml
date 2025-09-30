@@ -13,25 +13,30 @@ days_back = 730  # 0 = all time, 365 = last year, 730 = last 2 years
 # List of seed organizations to analyze
 # All repositories from these organizations will be included
 seed_orgs = [
-    "ethereum",
-    "OpenZeppelin",
-    "NomicFoundation",
-    "foundry-rs",
-    "metamask",
-    "ethers-io",
-    "smartcontractkit",
-    "ethereum-optimism",
-    "uniswap",
+    "fetchai",
+    "zkonduit",
+    "lagrange-labs",
+    "gensyn-ai",
+    "elizaos",
+    "virtual-protocol",
+    "ritual-net",
+    "primeintellect-ai",
+    "risk0",
+    "sentient-agi",
+    "oceanprotocol",
+    "phala-network",
+    "opentensor",
+    "singnet"
 ]
 
 # Analysis configuration
 [analysis]
 # Minimum commits threshold for all analysis (repositories, core contributors, extended contributors)
-min_commits = 10
+min_commits = 2
 # Minimum core contributors threshold for all analysis (seed repos, extended repos, all phases)
-min_core_contributors = 5
+min_core_contributors = 2
 # Repository filtering - get top repos sorted by stars
-max_repos_per_org = 100
+max_repos_per_org = 200
 
 [filters]
 # Contributor filters
