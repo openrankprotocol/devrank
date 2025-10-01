@@ -222,7 +222,7 @@ def save_contributors_data(contributors_df, output_dir="./raw"):
     output_path.mkdir(parents=True, exist_ok=True)
 
     # Save to CSV (always overwrite, no timestamp)
-    csv_file = output_path / "repo_contributors.csv"
+    csv_file = output_path / "seed_contributors.csv"
     # Only save specified columns
     filtered_df = contributors_df[['repository_name', 'contributor_handle']]
     filtered_df.to_csv(csv_file, index=False)

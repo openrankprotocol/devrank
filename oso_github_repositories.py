@@ -131,7 +131,7 @@ def discover_seed_repositories(config):
 
     # Check if seed repositories file already exists
     output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
-    seed_file = output_dir / "crypto_seed_repos.csv"
+    seed_file = output_dir / "seed_repos.csv"
 
     if seed_file.exists():
         print("✓ Seed repositories file already exists, loading from file...")
@@ -257,7 +257,7 @@ def discover_seed_repositories(config):
         'repository_name': all_seed_repos,
     })
 
-    seed_file = output_dir / "crypto_seed_repos.csv"
+    seed_file = output_dir / "seed_repos.csv"
     seed_repos_df.to_csv(seed_file, index=False)
     print(f"✓ Saved seed repositories: {seed_file}")
 
@@ -274,7 +274,7 @@ def find_core_contributors(seed_repos, config):
 
     # Check if core contributors file already exists
     output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
-    core_contrib_file = output_dir / "repo_contributors.csv"
+    core_contrib_file = output_dir / "seed_contributors.csv"
 
     if core_contrib_file.exists():
         print("✓ Core contributors file already exists, loading from file...")
@@ -595,7 +595,7 @@ def find_extended_repos_by_stars(core_contributors, config):
             'repository_name': extended_repos,
         })
 
-        extended_file = output_dir / "crypto_extended_repos_by_stars.csv"
+        extended_file = output_dir / "extended_repos.csv"
         extended_repos_df.to_csv(extended_file, index=False)
         print(f"✓ Saved extended repositories: {extended_file}")
 
@@ -645,7 +645,7 @@ def find_extended_contributors(extended_repos, config):
 
     # Save extended contributors data with custom filename
     output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
-    extended_contrib_file = output_dir / "crypto_extended_contributors_by_stars.csv"
+    extended_contrib_file = output_dir / "extended_contributors.csv"
     # Only save specified columns
     filtered_for_save = filtered_extended_contributors[['repository_name', 'contributor_handle']]
 
@@ -668,7 +668,7 @@ def main(config_path="config.toml"):
         output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
 
         # Step 1: Discover seed repositories from organizations
-        seed_repos_file = output_dir / "crypto_seed_repos.csv"
+        seed_repos_file = output_dir / "seed_repos.csv"
         if seed_repos_file.exists():
             print("✓ Step 1: Seed repositories file already exists, loading from file...")
             seed_repos_df = pd.read_csv(seed_repos_file)
@@ -678,7 +678,7 @@ def main(config_path="config.toml"):
             seed_repos = discover_seed_repositories(config)
 
         # Step 2: Find core contributors using repo_to_contributors
-        core_contrib_file = output_dir / "repo_contributors.csv"
+        core_contrib_file = output_dir / "seed_contributors.csv"
         if core_contrib_file.exists():
             print("✓ Step 2: Core contributors file already exists, loading from file...")
             core_contrib_df = pd.read_csv(core_contrib_file)
@@ -688,7 +688,7 @@ def main(config_path="config.toml"):
             core_contributors = find_core_contributors(seed_repos, config)
 
         # Step 3: Find extended repos by stars from orgs that core contributors work with
-        extended_repos_file = output_dir / "crypto_extended_repos_by_stars.csv"
+        extended_repos_file = output_dir / "extended_repos.csv"
         if extended_repos_file.exists():
             print("✓ Step 3: Extended repos file already exists, loading from file...")
             extended_repos_df = pd.read_csv(extended_repos_file)
@@ -698,7 +698,7 @@ def main(config_path="config.toml"):
             extended_repos = find_extended_repos_by_stars(core_contributors, config)
 
         # Step 4: Find extended contributors using repo_to_contributors
-        extended_contrib_file = output_dir / "crypto_extended_contributors_by_stars.csv"
+        extended_contrib_file = output_dir / "extended_contributors.csv"
         if extended_contrib_file.exists():
             print("✓ Step 4: Extended contributors file already exists, loading from file...")
             extended_contributors_df = pd.read_csv(extended_contrib_file)

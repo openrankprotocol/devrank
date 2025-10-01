@@ -123,8 +123,8 @@ def load_user_repo_pairs():
 
     # Load repositories efficiently using pandas
     for file_name, repo_col in [
-        ("crypto_seed_repos.csv", "repository_name"),
-        ("crypto_extended_repos_by_stars.csv", "repository_name")
+        ("seed_repos.csv", "repository_name"),
+        ("extended_repos.csv", "repository_name")
     ]:
         file_path = raw_dir / file_name
         if file_path.exists():
@@ -137,8 +137,8 @@ def load_user_repo_pairs():
 
     # Load user-repo pairs efficiently
     for file_name, user_col, repo_col in [
-        ("repo_contributors.csv", "contributor_handle", "repository_name"),
-        ("crypto_extended_contributors_by_stars.csv", "contributor_handle", "repository_name")
+        ("seed_contributors.csv", "contributor_handle", "repository_name"),
+        ("extended_contributors.csv", "contributor_handle", "repository_name")
     ]:
         file_path = raw_dir / file_name
         if file_path.exists():
