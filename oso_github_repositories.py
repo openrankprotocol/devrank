@@ -187,20 +187,20 @@ def discover_seed_repositories(config):
             org_repos_query = f"""
             WITH contributor_commits AS (
                 SELECT
-                    p.artifact_id,
-                    p.artifact_namespace,
-                    p.artifact_name,
+                    r.artifact_id,
+                    r.artifact_namespace,
+                    r.artifact_name,
                     u.artifact_name as contributor,
                     SUM(e.amount) as total_commits
-                FROM artifacts_by_project_v1 p
-                JOIN int_events_daily__github e ON e.to_artifact_id = p.artifact_id
+                FROM int_events_daily__github e
+                JOIN int_artifacts__github r ON e.to_artifact_id = r.artifact_id
                 JOIN int_github_users u ON e.from_artifact_id = u.artifact_id
-                WHERE p.artifact_source = 'GITHUB'
-                  AND p.artifact_namespace = '{org}'
+                WHERE
+                  r.artifact_namespace = '{org}'
                   AND e.event_type = 'COMMIT_CODE'
                   {bot_filter}
                   {time_filter}
-                GROUP BY p.artifact_id, p.artifact_namespace, p.artifact_name, u.artifact_name
+                GROUP BY 1,2,3,4
                 HAVING SUM(e.amount) >= {min_commits}
             ),
             repo_contributor_counts AS (
@@ -602,7 +602,12 @@ def find_extended_repos_by_stars(core_contributors, config):
         return extended_repos
 
     except Exception as e:
-        print(f"ERROR: Failed to find extended repos by stars: {e}")
+        # Handle pyoso exceptions that may have JSON parsing issues when converted to string
+        try:
+            error_msg = str(e)
+        except Exception:
+            error_msg = f"{type(e).__name__}: Unable to parse error message"
+        print(f"ERROR: Failed to find extended repos by stars: {error_msg}")
         return []
 
 

@@ -120,13 +120,20 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
         print(f"ERROR: Failed to initialize OSO client: {e}")
         sys.exit(1)
 
-    # Process batches sequentially
+    # Create job queue for retry logic
+    job_queue = [(batch_num, batch_repos, len(batches)) for batch_num, batch_repos in batches]
     all_contributors = []
-    for batch_num, batch_repos in batches:
+
+    # Process jobs in queue with retry logic
+    while job_queue:
         import time
         time.sleep(0.5)  # Add delay to avoid rate limiting
 
-        print(f"  Processing batch {batch_num}/{len(batches)} ({len(batch_repos)} repositories)...")
+        # Take one job from queue
+        current_job = job_queue.pop(0)
+        batch_num, batch_repos, total_batches = current_job
+
+        print(f"  Processing batch {batch_num}/{total_batches} ({len(batch_repos)} repositories)...")
 
         # Build repository conditions for this batch
         repo_conditions = []
@@ -179,7 +186,15 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
                 print(f"    Batch {batch_num}: No contributors found")
 
         except Exception as e:
-            print(f"    ERROR: Batch {batch_num} query failed: {str(e)}")
+            # Handle pyoso exceptions that may have JSON parsing issues when converted to string
+            try:
+                error_msg = str(e)
+            except Exception:
+                error_msg = f"{type(e).__name__}: Unable to parse error message"
+            print(f"    ERROR: Batch {batch_num} query failed: {error_msg}")
+            # Add failed job back to the end of the queue for retry
+            print(f"    Adding batch {batch_num} back to queue for retry")
+            job_queue.append(current_job)
             continue
 
     # Combine all batches

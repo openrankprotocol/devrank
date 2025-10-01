@@ -188,22 +188,16 @@ def process_batch_optimized(batch_pairs, client, date_filter="", config=None):
     results = []
 
     # Execute user-to-repo query
-    try:
-        user_to_repo_query = build_user_to_repo_query(users_str, repo_condition_str, date_filter, bot_filter)
-        batch_df1 = client.to_pandas(user_to_repo_query)
-        if not batch_df1.empty:
-            results.append(batch_df1)
-    except Exception as e:
-        print(f"    Error in user-to-repo query: {e}")
+    user_to_repo_query = build_user_to_repo_query(users_str, repo_condition_str, date_filter, bot_filter)
+    batch_df1 = client.to_pandas(user_to_repo_query)
+    if not batch_df1.empty:
+        results.append(batch_df1)
 
     # Execute repo-to-user query
-    try:
-        repo_to_user_query = build_repo_to_user_query(users_str, repo_condition_str, date_filter, bot_filter)
-        batch_df2 = client.to_pandas(repo_to_user_query)
-        if not batch_df2.empty:
-            results.append(batch_df2)
-    except Exception as e:
-        print(f"    Error in repo-to-user query: {e}")
+    repo_to_user_query = build_repo_to_user_query(users_str, repo_condition_str, date_filter, bot_filter)
+    batch_df2 = client.to_pandas(repo_to_user_query)
+    if not batch_df2.empty:
+        results.append(batch_df2)
 
     # Combine results
     if results:
