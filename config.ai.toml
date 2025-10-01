@@ -13,14 +13,15 @@ days_back = 730  # 0 = all time, 365 = last year, 730 = last 2 years
 # List of seed organizations to analyze
 # All repositories from these organizations will be included
 seed_orgs = [
-    "ethereum"
-    "openzeppelin"
-    "foundry-rs"
-    "ethereum-optimism"
-    "uniswap"
-    "smartcontractkit"
-    "nomicfoundation"
-    "metamask"
+    "tensorflow",
+    "pytorch",
+    "huggingface",
+    "langchain-ai",
+    "Significant-Gravitas",
+    "Stability-AI",
+    "openai",
+    "deepseek-ai",
+    "LAION-AI",
 ]
 
 # Analysis configuration
