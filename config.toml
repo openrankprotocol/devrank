@@ -20,7 +20,29 @@ seed_orgs = [
     "uniswap"
     "smartcontractkit"
     "nomicfoundation"
-    "metamask"
+    "metamask",
+    "ethpandaops",
+    "grandinetech"
+    "consensys",
+    "offchainlabs",
+    "chainsafe",
+    "sigp",
+    "nethermindeth",
+    "erigontech",
+    "starkware-libs",
+    "matter-labs",
+    "scroll-tech",
+    "openvm-org",
+    "taikoxyz",
+    "0xpolygon",
+    "aztecprotocol",
+    "fuellabs",
+    "op-rs",
+    "flashbots",
+    "safe-global",
+    "rainbow-me",
+    "argotorg",
+    "dapphub",
 ]
 
 # Analysis configuration

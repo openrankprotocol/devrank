@@ -4,6 +4,7 @@ scores/**
 trust/**
 seed/**
 tmp/**
+output/**
 
 __pycache__
 
