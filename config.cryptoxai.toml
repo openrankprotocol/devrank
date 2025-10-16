@@ -10,35 +10,55 @@ output_dir = "./raw"
 # Set to 0 to include all historical data
 days_back = 730  # 0 = all time, 365 = last year, 730 = last 2 years
 
-# List of seed organizations to analyze
-# All repositories from these organizations will be included
-seed_orgs = [
-    "fetchai",
-    "zkonduit",
-    "lagrange-labs",
-    "gensyn-ai",
-    "elizaos",
-    "virtual-protocol",
-    "ritual-net",
-    "PrimeIntellect-ai",
-    "risc0",
-    # "sentient-agi", #nofound
-    "oceanprotocol",
-    "phala-network",
-    "opentensor",
-    "singnet"
+# List of seed repositories to analyze
+# Core repositories that define the crypto x AI ecosystem
+seed_repos = [
+    "fetchai/fetchd",
+    "fetchai/cosmpy",
+    "zkonduit/ezkl",
+    "lagrange-labs/lagrange-node",
+    "gensyn-ai/gensyn-protocol",
+    "elizaos/eliza",
+    "virtual-protocol/virtuals-python",
+    "ritual-net/infernet-sdk",
+    "PrimeIntellect-ai/OpenDiloco",
+    "risc0/risc0",
+    "oceanprotocol/ocean.py",
+    "phala-network/phala-blockchain",
+    "opentensor/bittensor",
+    "singnet/snet-daemon"
 ]
 
 # Analysis configuration
 [analysis]
+# Enable extended repository and contributor analysis (set to false to only analyze seed repos)
+extended_analysis = true
 # Minimum commits threshold for all analysis (repositories, core contributors, extended contributors)
 min_commits = 2
 # Minimum core contributors threshold for all analysis (seed repos, extended repos, all phases)
 min_core_contributors = 2
-# Repository filtering - get top repos sorted by stars
-max_repos_per_org = 200
+# Maximum number of extended repositories to include (sorted by stars)
+max_extended_repos = 200
+
 
 [filters]
 # Contributor filters
 exclude_bots = true  # Set to true to exclude bot accounts
 bot_keywords = ["bot", "dependabot", "mergify", "renovate", "github-actions", "semantic-release"]
+
+# Event type weights for trust calculations
+[weights]
+# User-to-repo trust weights (higher values indicate stronger positive signals)
+[weights.user_to_repo]
+commit_code = 5
+pull_request_opened = 20
+pull_request_merged = 10
+starred = 5
+issue_opened = 10
+forked = 1
+
+# Repo-to-user trust weights (typically lower values, focused on core contributions)
+[weights.repo_to_user]
+commit_code = 3
+pull_request_opened = 5
+pull_request_merged = 1

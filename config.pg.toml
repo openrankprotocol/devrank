@@ -1,4 +1,4 @@
-# Crypto Ecosystem Analyzer Configuration - Organization-Based
+# Crypto Ecosystem Analyzer Configuration - Repository-Based
 # This file controls all the parameters for the analysis
 # Updated for comprehensive OSO schema with reasonable performance limits
 
@@ -11,18 +11,54 @@ output_dir = "./raw"
 days_back = 730  # 0 = all time, 365 = last year, 730 = last 2 years
 
 # List of seed repositories to analyze
-# Core repositories that define the AI ecosystem
+# Core repositories that define the ecosystem
 seed_repos = [
-    "tensorflow/tensorflow",
-    "pytorch/pytorch",
-    "huggingface/transformers",
-    "huggingface/datasets",
-    "langchain-ai/langchain",
-    "Significant-Gravitas/AutoGPT",
-    "Stability-AI/stablediffusion",
-    "openai/openai-python",
-    "deepseek-ai/DeepSeek-LLM",
-    "LAION-AI/Open-Assistant",
+    "ethereum/consensus-specs",
+    "ethereum/EIPs",
+    "ethereum/evmone",
+    "ethereum/execution-apis",
+    "ethereum/execution-specs",
+    "ethereum/go-ethereum",
+    "ethereum/hive",
+    "ethereum/protocol-security",
+    "erigontech/erigon",
+    "paradigmxyz/reth",
+    "bluealloy/revm",
+    "chainsafe/lodestar",
+    "consensys/teku",
+    "ethereumjs/ethereumjs-monorepo",
+    "ethPandaOps/ethereum-package",
+    "nethermindeth/nethermind",
+    "offchainlabs/prysm",
+    "ethereum/pm",
+    "ethereum/c-kzg-4844",
+    "ethereum/execution-spec-tests",
+    "ethereum/portal-network-specs",
+    "erigontech/silkworm",
+    "paradigmxyz/revmc",
+    "ethereumjs/ultralight",
+    "grandinetech/grandine",
+    "grandinetech/rust-kzg",
+    "protocolguild/documentation",
+    "sigp/lighthouse",
+    "status-im/nimbus-eth1",
+    "status-im/nimbus-eth2",
+    "imapp-pl/gas-cost-estimator",
+    "ipsilon/eof",
+    "ipsilon/evmc",
+    "crate-crypto/go-ipa",
+    "hyperledger/besu",
+    "hyperledger/besu-stateless",
+    "libp2p/jvm-libp2p",
+    "prysmaticlabs/gohashtree",
+    "sigp/discv5",
+    "sigp/enr",
+    "ethereum/trin",
+    "ethereum/tests",
+    "erigontech/rpc-tests",
+    "ethereum/go-verkle",
+    "consensys/tuweni",
+    "offchainlabs/hashtree",
 ]
 
 # Analysis configuration
@@ -34,7 +70,7 @@ min_commits = 2
 # Minimum core contributors threshold for all analysis (seed repos, extended repos, all phases)
 min_core_contributors = 2
 # Maximum number of extended repositories to include (sorted by stars)
-max_extended_repos = 200
+max_extended_repos = 1000
 
 
 # Event type weights for trust calculations
@@ -53,6 +89,7 @@ forked = 1
 commit_code = 3
 pull_request_opened = 5
 pull_request_merged = 1
+
 
 [filters]
 # Contributor filters

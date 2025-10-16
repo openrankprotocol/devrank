@@ -68,6 +68,9 @@ seed_orgs = [
 ]
 
 [analysis]
+# Enable extended repository and contributor analysis (set to false to only analyze seed repos)
+extended_analysis = true
+
 # Minimum commits threshold for all analysis (repositories, core contributors, extended contributors)
 min_commits = 5
 

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Crypto Ecosystem Contributor Network Analyzer - Pipeline Version
+Crypto Ecosystem Contributor Network Analyzer - Repository-Based Pipeline
 
-This script orchestrates a comprehensive crypto ecosystem analysis by using
-two specialized modules in a multi-step pipeline:
+This script orchestrates a comprehensive crypto ecosystem analysis using a
+repository-based approach:
 
-1. Get seed organizations from config.toml and find all their repositories
-2. Use repo_to_contributors.py to find core contributors of seed repos
-3. Use contributors_to_repos.py to find extended organizations and repositories
-4. Use repo_to_contributors.py again to find extended contributors
+1. Load seed repositories from config.toml
+2. Find core contributors for seed repositories
+3. Find extended repositories that core contributors contributed to
+4. Find extended contributors from the extended repositories
 
 Prerequisites:
 1. Create account at www.opensource.observer
 2. Generate API key in Account Settings > API Keys
 3. Set OSO_API_KEY environment variable or in .env file
 4. Install dependencies: pip install pyoso pandas python-dotenv tomli
-5. Configure parameters in config.toml
+5. Configure parameters in config.toml (use seed_repos instead of seed_orgs)
 
 Usage:
     export OSO_API_KEY="your_api_key_here"
@@ -31,6 +31,7 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 import importlib.util
+import time
 # Removed threading imports
 
 try:
@@ -62,6 +63,8 @@ def build_filter_conditions(config):
         'bot_filter': ' AND '.join(bot_conditions) if bot_conditions else '',
     }
 
+
+
 try:
     import tomli
 except ImportError:
@@ -84,6 +87,33 @@ except Exception as e:
     print(f"ERROR: Failed to import analysis modules: {e}")
     print("Make sure repo_to_contributors.py and contributors_to_repos.py are in the same directory")
     sys.exit(1)
+
+
+def retry_extended_analysis(func, *args, **kwargs):
+    """
+    Simple retry logic for extended analysis operations.
+    Tries up to 3 times with fixed delays.
+    """
+    for attempt in range(3):
+        try:
+            if attempt > 0:
+                print(f"  Retry attempt {attempt + 1}/3...")
+            result = func(*args, **kwargs)
+            if attempt > 0:
+                print(f"✓ Success on retry attempt {attempt + 1}")
+            return result
+
+        except Exception as e:
+            error_msg = str(e) if str(e) else f"{type(e).__name__}: Unable to parse error message"
+
+            if attempt < 2:  # Will retry
+                print(f"✗ Attempt failed: {error_msg}")
+                print(f"  Retrying in 10 seconds...")
+                time.sleep(10)
+            else:  # Final failure
+                print(f"✗ Final attempt failed: {error_msg}")
+                print(f"  Giving up after 3 attempts")
+                return [] if 'repos' in func.__name__ else pd.DataFrame()
 
 
 def load_config(config_path="config.toml"):
@@ -114,8 +144,8 @@ def validate_config(config):
             print(f"ERROR: Missing required section [{section}] in config.toml")
             sys.exit(1)
 
-    if not config["general"]["seed_orgs"]:
-        print("ERROR: No seed organizations specified in config.toml")
+    if not config["general"]["seed_repos"]:
+        print("ERROR: No seed repositories specified in config.toml")
         sys.exit(1)
 
     return config
@@ -123,7 +153,7 @@ def validate_config(config):
 
 def discover_seed_repositories(config):
     """
-    Step 1: Discover all repositories from seed organizations.
+    Step 1: Load seed repositories from configuration.
 
     Returns:
         list: List of repository identifiers in "org/repo" format
@@ -140,113 +170,21 @@ def discover_seed_repositories(config):
         print(f"✓ Loaded {len(seed_repos)} seed repositories from {seed_file}")
         return seed_repos
 
-    # Get API key
-    api_key = os.getenv('OSO_API_KEY')
-    if not api_key:
-        print("ERROR: OSO API key required. Set OSO_API_KEY environment variable.")
-        sys.exit(1)
+    # Get seed repositories from config
+    seed_repos = config["general"]["seed_repos"]
 
-    # Initialize client
-    try:
-        import pyoso
-        os.environ["OSO_API_KEY"] = api_key
-        client = pyoso.Client()
-        print("✓ OSO client initialized")
-    except ImportError:
-        print("ERROR: Install pyoso with: pip install pyoso pandas python-dotenv")
-        sys.exit(1)
-    except Exception as e:
-        print(f"ERROR: Failed to initialize OSO client: {e}")
-        sys.exit(1)
+    print(f"Loading {len(seed_repos)} seed repositories from configuration...")
 
-    seed_orgs = config["general"]["seed_orgs"]
-    all_seed_repos = []
+    # Validate repositories exist (optional check)
+    # We'll skip API validation for now to keep it simple
 
-    print(f"Discovering repositories from {len(seed_orgs)} organizations...")
+    for repo in seed_repos:
+        print(f"  ✓ {repo}")
 
-    for org in seed_orgs:
-        print(f"  Finding repositories in {org} (with minimum {config.get('analysis', {}).get('min_core_contributors', 2)} core contributors)...")
-        try:
-            # Get filtering parameters
-            min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
-            min_commits = config.get("analysis", {}).get("min_commits", 10)
-            days_back = config.get("general", {}).get("days_back", 0)
+    print(f"\n✓ Total seed repositories loaded: {len(seed_repos)}")
 
-            # Build filter conditions
-            filter_conditions = build_filter_conditions(config)
-            bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions['bot_filter'] else ""
-
-            # Add time filter if days_back is specified
-            time_filter = ""
-            if days_back > 0:
-                from datetime import datetime, timedelta
-                cutoff_date = datetime.now() - timedelta(days=days_back)
-                time_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
-
-            # Query to find repositories with minimum core contributors
-            org_repos_query = f"""
-            WITH contributor_commits AS (
-                SELECT
-                    r.artifact_id,
-                    r.artifact_namespace,
-                    r.artifact_name,
-                    u.artifact_name as contributor,
-                    SUM(e.amount) as total_commits
-                FROM int_events_daily__github e
-                JOIN int_artifacts__github r ON e.to_artifact_id = r.artifact_id
-                JOIN int_github_users u ON e.from_artifact_id = u.artifact_id
-                WHERE
-                  r.artifact_namespace = '{org}'
-                  AND e.event_type = 'COMMIT_CODE'
-                  {bot_filter}
-                  {time_filter}
-                GROUP BY 1,2,3,4
-                HAVING SUM(e.amount) >= {min_commits}
-            ),
-            repo_contributor_counts AS (
-                SELECT
-                    artifact_namespace,
-                    artifact_name,
-                    CONCAT(artifact_namespace, '/', artifact_name) as repository_name,
-                    COUNT(DISTINCT contributor) as core_contributor_count
-                FROM contributor_commits
-                GROUP BY artifact_namespace, artifact_name
-                HAVING COUNT(DISTINCT contributor) >= {min_core_contributors}
-            )
-            SELECT
-                artifact_namespace,
-                artifact_name,
-                repository_name
-            FROM repo_contributor_counts
-            ORDER BY artifact_name
-            LIMIT {config.get('analysis', {}).get('max_repos_per_org', 200)}
-            """
-
-            org_repos_df = client.to_pandas(org_repos_query)
-
-            if not org_repos_df.empty:
-                org_repos = org_repos_df['repository_name'].tolist()
-                all_seed_repos.extend(org_repos)
-                print(f"    Found {len(org_repos)} repositories")
-            else:
-                print(f"    No repositories found for {org}")
-
-        except Exception as e:
-            # Handle pyoso exceptions that may have JSON parsing issues when converted to string
-            try:
-                error_msg = str(e)
-            except Exception:
-                error_msg = f"{type(e).__name__}: Unable to parse error message"
-            print(f"    Error finding repositories for {org}: {error_msg}")
-            continue
-
-    # Remove duplicates
-    all_seed_repos = list(set(all_seed_repos))
-
-    print(f"\n✓ Total seed repositories discovered: {len(all_seed_repos)} (after removing duplicates)")
-
-    if not all_seed_repos:
-        print("ERROR: No seed repositories found!")
+    if not seed_repos:
+        print("ERROR: No seed repositories found in configuration!")
         sys.exit(1)
 
     # Save seed repositories list
@@ -254,14 +192,14 @@ def discover_seed_repositories(config):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     seed_repos_df = pd.DataFrame({
-        'repository_name': all_seed_repos,
+        'repository_name': seed_repos,
     })
 
     seed_file = output_dir / "seed_repos.csv"
     seed_repos_df.to_csv(seed_file, index=False)
     print(f"✓ Saved seed repositories: {seed_file}")
 
-    return all_seed_repos
+    return seed_repos
 
 
 def find_core_contributors(seed_repos, config):
@@ -382,48 +320,109 @@ def find_extended_ecosystem(core_contributors, config):
 
 def find_extended_repos_by_stars(core_contributors, config):
     """
-    Find extended repos by stars from orgs that contributors work with
-
-    Given contributors:
-    1. Find all repos they contributed to
-    2. Find all unique orgs/users that own these repos
-    3. Take top 10 repos from each org/user ranked by stars
-
-    Args:
-        core_contributors: List of contributor handles
-        config: Configuration dict
-
-    Returns:
-        list: List of extended repository names
+    Find extended repos that core contributors contributed to, sorted by stars
+    Uses chunking approach to handle large contributor lists.
     """
-    # Get API key
-    api_key = os.getenv('OSO_API_KEY')
-    if not api_key:
-        print("ERROR: OSO API key required. Set OSO_API_KEY environment variable.")
-        sys.exit(1)
-
-    # Initialize client
-    try:
-        import pyoso
-        os.environ["OSO_API_KEY"] = api_key
-        client = pyoso.Client()
-        print("✓ OSO client initialized")
-    except ImportError:
-        print("ERROR: Install pyoso with: pip install pyoso pandas python-dotenv")
-        sys.exit(1)
-    except Exception as e:
-        print(f"ERROR: Failed to initialize OSO client: {e}")
-        sys.exit(1)
-
     if not core_contributors:
         print("ERROR: No core contributors provided")
         return []
 
-    min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
-    print(f"Finding repos contributed to by {len(core_contributors)} core contributors (with minimum {min_core_contributors} core contributors)...")
+    # Get API key
+    api_key = config.get("api_key") or os.getenv("OSO_API_KEY")
+    if not api_key:
+        print("ERROR: OSO_API_KEY is required")
+        return []
 
-    # Build contributors filter
-    contributors_str = "', '".join([c.replace("'", "''") for c in core_contributors])
+    try:
+        from pyoso import Client
+        client = Client(api_key=api_key)
+        print("✓ OSO client initialized")
+    except ImportError:
+        print("ERROR: pyoso library not found. Install with: pip install pyoso")
+        return []
+    except Exception as e:
+        print(f"ERROR: Failed to initialize OSO client: {e}")
+        return []
+
+    min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
+    min_commits = config.get("analysis", {}).get("min_commits", 10)
+    max_extended_repos = config.get("analysis", {}).get("max_extended_repos", 200)
+
+    print(f"Finding extended repos from {len(core_contributors)} core contributors...")
+    print(f"  Filters: min_commits={min_commits}, min_core_contributors={min_core_contributors}")
+    print(f"  Will select top {max_extended_repos} repos by star count")
+
+    # Process in chunks to avoid huge queries
+    chunk_size = 100  # Process 100 contributors at a time
+    all_repo_stats = {}
+
+    for i in range(0, len(core_contributors), chunk_size):
+        chunk = core_contributors[i:i+chunk_size]
+        print(f"  Processing chunk {i//chunk_size + 1}/{(len(core_contributors) + chunk_size - 1)//chunk_size}")
+
+        try:
+            chunk_results = _process_contributor_chunk(chunk, config, client, min_commits)
+
+            # Merge results
+            for repo_name, stats in chunk_results.items():
+                if repo_name in all_repo_stats:
+                    all_repo_stats[repo_name]['contributors'].update(stats['contributors'])
+                    all_repo_stats[repo_name]['total_commits'] += stats['total_commits']
+                else:
+                    all_repo_stats[repo_name] = stats
+
+        except Exception as e:
+            print(f"    Chunk failed: {e}")
+            continue
+
+    if not all_repo_stats:
+        print("✗ No extended repositories found")
+        return []
+
+    # Filter by minimum core contributors
+    filtered_repos = {}
+    for repo_name, stats in all_repo_stats.items():
+        contributor_count = len(stats['contributors'])
+        if contributor_count >= min_core_contributors:
+            filtered_repos[repo_name] = {
+                'contributor_count': contributor_count,
+                'total_commits': stats['total_commits']
+            }
+
+    if not filtered_repos:
+        print(f"✗ No repositories meet minimum {min_core_contributors} core contributors")
+        return []
+
+    print(f"  Found {len(filtered_repos)} repositories meeting criteria")
+
+    # Get top repos by commits (simpler than star ranking)
+    sorted_repos = sorted(
+        filtered_repos.items(),
+        key=lambda x: x[1]['total_commits'],
+        reverse=True
+    )
+    final_repos = [name for name, _ in sorted_repos[:max_extended_repos]]
+
+    print(f"✓ Found {len(final_repos)} extended repositories")
+
+    # Save results
+    try:
+        output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        extended_repos_df = pd.DataFrame({'repository_name': final_repos})
+        extended_file = output_dir / "extended_repos.csv"
+        extended_repos_df.to_csv(extended_file, index=False)
+        print(f"✓ Saved extended repositories: {extended_file}")
+    except Exception as e:
+        print(f"Warning: Could not save results: {e}")
+
+    return final_repos
+
+
+def _process_contributor_chunk(contributors_chunk, config, client, min_commits):
+    """Process a chunk of contributors and return repository statistics."""
+    contributors_str = "', '".join([c.replace("'", "''") for c in contributors_chunk])
 
     # Build date filter
     date_filter = ""
@@ -433,182 +432,59 @@ def find_extended_repos_by_stars(core_contributors, config):
         cutoff_date = datetime.now() - timedelta(days=date_filter_days)
         date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
 
-    try:
-        # Build filter conditions
-        filter_conditions = build_filter_conditions(config)
-        bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions['bot_filter'] else ""
+    # Get seed repos to exclude
+    seed_repos = config.get("general", {}).get("seed_repos", [])
+    seed_exclusion = ""
+    if seed_repos:
+        seed_conditions = []
+        for repo in seed_repos:
+            if '/' in repo:
+                org, name = repo.split('/', 1)
+                seed_conditions.append(f"(p.artifact_namespace = '{org}' AND p.artifact_name = '{name}')")
+        if seed_conditions:
+            seed_exclusion = f"AND NOT ({' OR '.join(seed_conditions)})"
 
-        # Find all repos that core contributors worked on
-        repos_query = f"""
-        SELECT DISTINCT
-            p.artifact_namespace as org_name,
-            p.artifact_name as repo_name,
-            CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name
-        FROM int_events_daily__github AS e
-        JOIN int_github_users AS u ON e.from_artifact_id = u.artifact_id
-        JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
-        WHERE u.artifact_name IN ('{contributors_str}')
-          AND e.event_type = 'COMMIT_CODE'
-          {bot_filter}
-          {date_filter}
-          AND p.artifact_source = 'GITHUB'
-        """
+    # Build bot filter
+    filter_conditions = build_filter_conditions(config)
+    bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions.get('bot_filter') else ""
 
-        repos_df = client.to_pandas(repos_query)
+    # Simple query to get repo commits by contributor
+    query = f"""
+    SELECT
+        CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name,
+        u.artifact_name as contributor,
+        SUM(e.amount) as commits
+    FROM int_events_daily__github AS e
+    JOIN int_github_users AS u ON e.from_artifact_id = u.artifact_id
+    JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
+    WHERE u.artifact_name IN ('{contributors_str}')
+      AND e.event_type = 'COMMIT_CODE'
+      AND p.artifact_source = 'GITHUB'
+      {bot_filter}
+      {date_filter}
+      {seed_exclusion}
+    GROUP BY p.artifact_namespace, p.artifact_name, u.artifact_name
+    HAVING SUM(e.amount) >= {min_commits}
+    """
 
-        if repos_df.empty:
-            print("✗ No repositories found for core contributors")
-            return []
+    df = client.to_pandas(query)
+    if df.empty:
+        return {}
 
-        print(f"✓ Found {len(repos_df)} repositories contributed to by core contributors")
+    # Aggregate by repository
+    repo_stats = {}
+    for _, row in df.iterrows():
+        repo = row['repository_name']
+        contributor = row['contributor']
+        commits = row['commits']
 
-        # Get unique organizations
-        unique_orgs = repos_df['org_name'].unique()
-        print(f"✓ Identified {len(unique_orgs)} unique organizations/users")
+        if repo not in repo_stats:
+            repo_stats[repo] = {'contributors': set(), 'total_commits': 0}
 
-        # Process organizations in batches with parallel processing
-        batch_size = 500
-        batches = []
+        repo_stats[repo]['contributors'].add(contributor)
+        repo_stats[repo]['total_commits'] += commits
 
-        # Create batches
-        for batch_start in range(0, len(unique_orgs), batch_size):
-            batch_orgs = unique_orgs[batch_start:batch_start + batch_size]
-            batch_num = batch_start // batch_size + 1
-            batches.append((batch_num, batch_orgs))
-
-        print(f"Processing {len(batches)} organization batches sequentially...")
-
-        from datetime import datetime
-        start_time = datetime.now()
-
-        # Process batches sequentially
-        extended_repos = []
-
-        for batch_num, batch_orgs in batches:
-            import time
-            time.sleep(0.5)  # Add delay to avoid rate limiting
-
-            print(f"  Processing batch {batch_num}/{len(batches)} ({len(batch_orgs)} organizations)...")
-
-            try:
-                # Build filter conditions
-                filter_conditions = build_filter_conditions(config)
-                bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions['bot_filter'] else ""
-
-                # Build org conditions for batch
-                org_conditions = []
-                for org in batch_orgs:
-                    org_conditions.append(f"p.artifact_namespace = '{org.replace(chr(39), chr(39)+chr(39))}'")
-
-                org_condition_str = " OR ".join(org_conditions)
-
-                min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
-                min_commits = config.get("analysis", {}).get("min_commits", 10)
-
-                stars_query = f"""
-                WITH contributor_commits AS (
-                    SELECT
-                        p.artifact_id,
-                        p.artifact_namespace,
-                        p.artifact_name,
-                        u.artifact_name as contributor,
-                        SUM(e.amount) as total_commits
-                    FROM artifacts_by_project_v1 p
-                    JOIN int_events_daily__github e ON e.to_artifact_id = p.artifact_id
-                    JOIN int_github_users u ON e.from_artifact_id = u.artifact_id
-                    WHERE ({org_condition_str})
-                      AND e.event_type = 'COMMIT_CODE'
-                      {bot_filter}
-                      AND p.artifact_source = 'GITHUB'
-                      {date_filter}
-                    GROUP BY p.artifact_id, p.artifact_namespace, p.artifact_name, u.artifact_name
-                    HAVING SUM(e.amount) >= {min_commits}
-                ),
-                repo_with_core_contributors AS (
-                    SELECT
-                        artifact_namespace,
-                        artifact_name,
-                        COUNT(DISTINCT contributor) as core_contributor_count
-                    FROM contributor_commits
-                    GROUP BY artifact_namespace, artifact_name
-                    HAVING COUNT(DISTINCT contributor) >= {min_core_contributors}
-                ),
-                ranked_repos AS (
-                    SELECT
-                        p.artifact_namespace as org_name,
-                        p.artifact_name as repo_name,
-                        CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name,
-                        SUM(e.amount) as total_stars,
-                        ROW_NUMBER() OVER (PARTITION BY p.artifact_namespace ORDER BY SUM(e.amount) DESC) as rn
-                    FROM int_events_daily__github AS e
-                    JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
-                    JOIN repo_with_core_contributors rc ON p.artifact_namespace = rc.artifact_namespace AND p.artifact_name = rc.artifact_name
-                    WHERE ({org_condition_str})
-                      AND e.event_type = 'STARRED'
-                      AND p.artifact_source = 'GITHUB'
-                      {date_filter}
-                    GROUP BY p.artifact_namespace, p.artifact_name
-                )
-                SELECT org_name, repo_name, repository_name, total_stars
-                FROM ranked_repos
-                WHERE rn <= {config.get('analysis', {}).get('max_repos_per_org', 200)}
-                ORDER BY org_name, total_stars DESC
-                """
-
-                batch_stars_df = client.to_pandas(stars_query)
-
-                if not batch_stars_df.empty:
-                    batch_repos = batch_stars_df['repository_name'].tolist()
-                    extended_repos.extend(batch_repos)
-
-                    # Show summary by org
-                    org_counts = batch_stars_df.groupby('org_name').size()
-                    summary = []
-                    for org, count in org_counts.items():
-                        summary.append(f"{org}: {count}")
-                    print(f"    Batch {batch_num}: Found repos for {', '.join(summary)}")
-                else:
-                    print(f"    Batch {batch_num}: No repositories found")
-
-            except Exception as e:
-                error_msg = str(e)
-                if "Expecting value" in error_msg:
-                    print(f"    ERROR: Batch {batch_num} received empty JSON response (likely rate limited)")
-                else:
-                    print(f"    ERROR: Batch {batch_num} query failed: {error_msg}")
-                continue
-
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-
-        extended_repos = list(set(extended_repos))  # Remove duplicates
-
-        # No limits - find as many repos as possible
-        output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
-
-        print(f"✓ Found {len(extended_repos)} extended repositories in {duration:.1f}s")
-
-        # Save extended repositories list
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        extended_repos_df = pd.DataFrame({
-            'repository_name': extended_repos,
-        })
-
-        extended_file = output_dir / "extended_repos.csv"
-        extended_repos_df.to_csv(extended_file, index=False)
-        print(f"✓ Saved extended repositories: {extended_file}")
-
-        return extended_repos
-
-    except Exception as e:
-        # Handle pyoso exceptions that may have JSON parsing issues when converted to string
-        try:
-            error_msg = str(e)
-        except Exception:
-            error_msg = f"{type(e).__name__}: Unable to parse error message"
-        print(f"ERROR: Failed to find extended repos by stars: {error_msg}")
-        return []
+    return repo_stats
 
 
 def find_extended_contributors(extended_repos, config):
@@ -624,36 +500,42 @@ def find_extended_contributors(extended_repos, config):
 
     print(f"Finding contributors for {len(extended_repos)} extended repositories...")
 
-    # Configure parameters from config.toml
-    min_commits = config.get("analysis", {}).get("min_commits", 10)
-    date_filter_days = config.get("general", {}).get("days_back", 0)
+    try:
+        # Configure parameters from config.toml
+        min_commits = config.get("analysis", {}).get("min_commits", 10)
+        date_filter_days = config.get("general", {}).get("days_back", 0)
 
-    # Use repo_to_contributors module
-    extended_contributors_df = repo_to_contributors.get_contributors_by_repos(
-        repo_identifiers=extended_repos,
-        min_commits=min_commits,
-        date_filter_days=date_filter_days,
-        config=config
-    )
+        # Use repo_to_contributors module
+        extended_contributors_df = repo_to_contributors.get_contributors_by_repos(
+            repo_identifiers=extended_repos,
+            min_commits=min_commits,
+            date_filter_days=date_filter_days,
+            config=config
+        )
 
-    if extended_contributors_df.empty:
-        print("No extended contributors found")
+        if extended_contributors_df.empty:
+            print("No extended contributors found")
+            return pd.DataFrame()
+
+        # No limits - keep all contributors
+        filtered_extended_contributors = extended_contributors_df
+
+        # Save extended contributors data with custom filename
+        output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
+        extended_contrib_file = output_dir / "extended_contributors.csv"
+        # Only save specified columns
+        filtered_for_save = filtered_extended_contributors[['repository_name', 'contributor_handle']]
+
+        # Save extended contributors data
+        filtered_for_save.to_csv(extended_contrib_file, index=False)
+        print(f"✓ Saved extended contributors: {extended_contrib_file}")
+
+        return filtered_extended_contributors
+
+    except Exception as e:
+        error_msg = str(e) if str(e) else f"{type(e).__name__}: Unable to parse error message"
+        print(f"ERROR: Failed to find extended contributors: {error_msg}")
         return pd.DataFrame()
-
-    # No limits - keep all contributors
-    filtered_extended_contributors = extended_contributors_df
-
-    # Save extended contributors data with custom filename
-    output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
-    extended_contrib_file = output_dir / "extended_contributors.csv"
-    # Only save specified columns
-    filtered_for_save = filtered_extended_contributors[['repository_name', 'contributor_handle']]
-
-    # Save extended contributors data
-    filtered_for_save.to_csv(extended_contrib_file, index=False)
-    print(f"✓ Saved extended contributors: {extended_contrib_file}")
-
-    return filtered_extended_contributors
 
 def main(config_path="config.toml"):
     """Main orchestration function."""
@@ -667,7 +549,7 @@ def main(config_path="config.toml"):
     try:
         output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
 
-        # Step 1: Discover seed repositories from organizations
+        # Step 1: Load seed repositories from configuration
         seed_repos_file = output_dir / "seed_repos.csv"
         if seed_repos_file.exists():
             print("✓ Step 1: Seed repositories file already exists, loading from file...")
@@ -677,7 +559,7 @@ def main(config_path="config.toml"):
         else:
             seed_repos = discover_seed_repositories(config)
 
-        # Step 2: Find core contributors using repo_to_contributors
+        # Step 2: Find core contributors for seed repositories
         core_contrib_file = output_dir / "seed_contributors.csv"
         if core_contrib_file.exists():
             print("✓ Step 2: Core contributors file already exists, loading from file...")
@@ -687,24 +569,47 @@ def main(config_path="config.toml"):
         else:
             core_contributors = find_core_contributors(seed_repos, config)
 
-        # Step 3: Find extended repos by stars from orgs that core contributors work with
-        extended_repos_file = output_dir / "extended_repos.csv"
-        if extended_repos_file.exists():
-            print("✓ Step 3: Extended repos file already exists, loading from file...")
-            extended_repos_df = pd.read_csv(extended_repos_file)
-            extended_repos = extended_repos_df['repository_name'].tolist()
-            print(f"✓ Loaded {len(extended_repos)} extended repositories from {extended_repos_file}")
-        else:
-            extended_repos = find_extended_repos_by_stars(core_contributors, config)
+        # Check if extended analysis is enabled
+        extended_analysis_enabled = config.get("analysis", {}).get("extended_analysis", True)
 
-        # Step 4: Find extended contributors using repo_to_contributors
-        extended_contrib_file = output_dir / "extended_contributors.csv"
-        if extended_contrib_file.exists():
-            print("✓ Step 4: Extended contributors file already exists, loading from file...")
-            extended_contributors_df = pd.read_csv(extended_contrib_file)
-            print(f"✓ Loaded {len(extended_contributors_df)} extended contributor records from {extended_contrib_file}")
+        if extended_analysis_enabled:
+            print("📊 Extended analysis is enabled")
+
+            # Step 3: Find extended repositories that core contributors contributed to
+            extended_repos_file = output_dir / "extended_repos.csv"
+            if extended_repos_file.exists():
+                print("✓ Step 3: Extended repos file already exists, loading from file...")
+                extended_repos_df = pd.read_csv(extended_repos_file)
+                extended_repos = extended_repos_df['repository_name'].tolist()
+                print(f"✓ Loaded {len(extended_repos)} extended repositories from {extended_repos_file}")
+            else:
+                print("🔍 Step 3: Finding extended repositories...")
+                extended_repos = retry_extended_analysis(
+                    find_extended_repos_by_stars,
+                    core_contributors,
+                    config
+                )
+
+            # Step 4: Find extended contributors from extended repositories
+            extended_contrib_file = output_dir / "extended_contributors.csv"
+            if extended_contrib_file.exists():
+                print("✓ Step 4: Extended contributors file already exists, loading from file...")
+                extended_contributors_df = pd.read_csv(extended_contrib_file)
+                print(f"✓ Loaded {len(extended_contributors_df)} extended contributor records from {extended_contrib_file}")
+            else:
+                if extended_repos:
+                    print("👥 Step 4: Finding extended contributors...")
+                    extended_contributors_df = retry_extended_analysis(
+                        find_extended_contributors,
+                        extended_repos,
+                        config
+                    )
+                else:
+                    print("⚠️  No extended repositories found - skipping extended contributors")
+                    extended_contributors_df = pd.DataFrame()
         else:
-            extended_contributors_df = find_extended_contributors(extended_repos, config)
+            print("⚠️  Extended analysis is disabled - skipping extended repositories and contributors")
+            print("   Only seed repositories and their core contributors will be analyzed")
 
 
 
