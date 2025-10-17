@@ -416,8 +416,8 @@ def get_unprocessed_pairs(user_repo_pairs, days_back):
     print("✓ No compatible cache found, processing all pairs")
     return user_repo_pairs, set()
 
-def load_cached_interactions_for_trust(days_back, config=None):
-    """Load cached interactions and convert to trust format using config weights"""
+def load_cached_interactions_for_trust(days_back, needed_user_repo_pairs, config=None):
+    """Load cached interactions for specific user-repo pairs and convert to trust format using config weights"""
     cache_dir = Path("cache")
     cache_file = cache_dir / f"interactions_{days_back}.csv"
 
@@ -426,7 +426,11 @@ def load_cached_interactions_for_trust(days_back, config=None):
     if cache_file.exists():
         try:
             df = pd.read_csv(cache_file)
-            print(f"✓ Loading {len(df)} cached interactions for trust calculation...")
+            print(f"✓ Found {len(df)} total cached interactions, filtering for needed pairs...")
+
+            # Filter for only the needed user-repo pairs
+            filtered_df = df[df.apply(lambda row: (row.get('user', ''), row.get('repo', '')) in needed_user_repo_pairs, axis=1)]
+            print(f"✓ Filtered to {len(filtered_df)} relevant cached interactions for trust calculation...")
 
             # Get weights from config or use defaults
             if config:
@@ -454,7 +458,7 @@ def load_cached_interactions_for_trust(days_back, config=None):
             repo_to_user_weights = {k.upper(): v for k, v in repo_to_user_weights.items()}
 
             # Convert cached interactions to trust relationships using config weights
-            for _, row in df.iterrows():
+            for _, row in filtered_df.iterrows():
                 user = row.get('user', '')
                 repo = row.get('repo', '')
                 event_type = row.get('event_type', '').upper()
@@ -718,7 +722,7 @@ def generate_trust_relationships(config_path="config.toml"):
 
     # Load cached trust relationships for already processed pairs
     cached_trust_relationships = []
-    cached_trust_df = load_cached_interactions_for_trust(days_back, config)
+    cached_trust_df = load_cached_interactions_for_trust(days_back, user_repo_pairs, config)
     if not cached_trust_df.empty:
         cached_trust_relationships.append(cached_trust_df)
 

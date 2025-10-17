@@ -92,14 +92,13 @@ seed_repos = [
 # Analysis configuration
 [analysis]
 # Enable extended repository and contributor analysis (set to false to only analyze seed repos)
-extended_analysis = false
+extended_analysis = true
 # Minimum commits threshold for all analysis (repositories, core contributors, extended contributors)
 min_commits = 1
 # Minimum core contributors threshold for all analysis (seed repos, extended repos, all phases)
 min_core_contributors = 2
 # Maximum number of extended repositories to include (sorted by stars)
 max_extended_repos = 1000
-
 
 # Event type weights for trust calculations
 [weights]
