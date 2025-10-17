@@ -32,6 +32,8 @@ from datetime import datetime
 from pathlib import Path
 import importlib.util
 import time
+import json
+from collections import deque
 # Removed threading imports
 
 try:
@@ -151,6 +153,137 @@ def validate_config(config):
     return config
 
 
+def get_cache_filename(days_back, min_core_contributors, min_commits):
+    """Generate cache filename based on days_back, min_core_contributors, and min_commits."""
+    return f"repo_contributors_{days_back}_{min_core_contributors}_{min_commits}.json"
+
+
+def get_contributor_repos_cache_filename(days_back, min_core_contributors, min_commits):
+    """Generate contributor-repos cache filename based on days_back, min_core_contributors, and min_commits."""
+    return f"contributor_repos_{days_back}_{min_core_contributors}_{min_commits}.json"
+
+
+def load_repo_contributors_cache(config):
+    """Load repository-contributors mapping from cache file."""
+    days_back = config.get("general", {}).get("days_back", 0)
+    min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
+    min_commits = config.get("analysis", {}).get("min_commits", 10)
+
+    cache_dir = Path("cache")
+    cache_file = cache_dir / get_cache_filename(days_back, min_core_contributors, min_commits)
+
+    if cache_file.exists():
+        try:
+            with open(cache_file, 'r') as f:
+                cache_data = json.load(f)
+            print(f"✓ Loaded repo-contributors cache: {cache_file.name}")
+            print(f"  Cached repositories: {len(cache_data):,}")
+            return cache_data
+        except Exception as e:
+            print(f"Warning: Could not load cache file {cache_file}: {e}")
+            return {}
+
+    return {}
+
+
+def save_repo_contributors_cache(repo_contributors_map, config):
+    """Save repository-contributors mapping to cache file."""
+    days_back = config.get("general", {}).get("days_back", 0)
+    min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
+    min_commits = config.get("analysis", {}).get("min_commits", 10)
+
+    cache_dir = Path("cache")
+    cache_dir.mkdir(exist_ok=True)
+    cache_file = cache_dir / get_cache_filename(days_back, min_core_contributors, min_commits)
+
+    try:
+        with open(cache_file, 'w') as f:
+            json.dump(repo_contributors_map, f, indent=2)
+        print(f"✓ Saved repo-contributors cache: {cache_file.name}")
+        print(f"  Cached repositories: {len(repo_contributors_map):,}")
+    except Exception as e:
+        print(f"Warning: Could not save cache file {cache_file}: {e}")
+
+
+def update_repo_contributors_cache(new_data, config):
+    """Update existing cache with new repository-contributors data."""
+    # Load existing cache
+    existing_cache = load_repo_contributors_cache(config)
+
+    # Merge new data
+    existing_cache.update(new_data)
+
+    # Save updated cache
+    save_repo_contributors_cache(existing_cache, config)
+
+    return existing_cache
+
+
+def load_contributor_repos_cache(config):
+    """Load contributor-repositories mapping from cache file."""
+    days_back = config.get("general", {}).get("days_back", 0)
+    min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
+    min_commits = config.get("analysis", {}).get("min_commits", 10)
+
+    cache_dir = Path("cache")
+    cache_file = cache_dir / get_contributor_repos_cache_filename(days_back, min_core_contributors, min_commits)
+
+    if cache_file.exists():
+        try:
+            with open(cache_file, 'r') as f:
+                cache_data = json.load(f)
+            print(f"✓ Loaded contributor-repos cache: {cache_file.name}")
+            print(f"  Cached contributors: {len(cache_data):,}")
+            return cache_data
+        except Exception as e:
+            print(f"Warning: Could not load contributor-repos cache file {cache_file}: {e}")
+            return {}
+    else:
+        print(f"  Contributor-repos cache file does not exist: {cache_file}")
+
+    return {}
+
+
+def save_contributor_repos_cache(contributor_repos_map, config):
+    """Save contributor-repositories mapping to cache file."""
+    days_back = config.get("general", {}).get("days_back", 0)
+    min_core_contributors = config.get("analysis", {}).get("min_core_contributors", 2)
+    min_commits = config.get("analysis", {}).get("min_commits", 10)
+
+    cache_dir = Path("cache")
+    cache_dir.mkdir(exist_ok=True)
+    cache_file = cache_dir / get_contributor_repos_cache_filename(days_back, min_core_contributors, min_commits)
+
+    try:
+        with open(cache_file, 'w') as f:
+            json.dump(contributor_repos_map, f, indent=2)
+        print(f"✓ Saved contributor-repos cache: {cache_file.name}")
+        print(f"  Cached contributors: {len(contributor_repos_map):,}")
+    except Exception as e:
+        print(f"Warning: Could not save contributor-repos cache file {cache_file}: {e}")
+
+
+def update_contributor_repos_cache(contributors_df, config):
+    """Update contributor-repos cache with new data from contributors DataFrame."""
+    # Load existing cache
+    existing_cache = load_contributor_repos_cache(config)
+
+    # Build new cache data from DataFrame
+    for _, row in contributors_df.iterrows():
+        contributor = row['contributor_handle']
+        repo = row['repository_name']
+
+        if contributor not in existing_cache:
+            existing_cache[contributor] = []
+        if repo not in existing_cache[contributor]:
+            existing_cache[contributor].append(repo)
+
+    # Save updated cache
+    save_contributor_repos_cache(existing_cache, config)
+
+    return existing_cache
+
+
 def discover_seed_repositories(config):
     """
     Step 1: Load seed repositories from configuration.
@@ -159,17 +292,7 @@ def discover_seed_repositories(config):
         list: List of repository identifiers in "org/repo" format
     """
 
-    # Check if seed repositories file already exists
-    output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
-    seed_file = output_dir / "seed_repos.csv"
-
-    if seed_file.exists():
-        print("✓ Seed repositories file already exists, loading from file...")
-        seed_repos_df = pd.read_csv(seed_file)
-        seed_repos = seed_repos_df['repository_name'].tolist()
-        print(f"✓ Loaded {len(seed_repos)} seed repositories from {seed_file}")
-        return seed_repos
-
+    print("🔍 Step 1: Discovering seed repositories...")
     # Get seed repositories from config
     seed_repos = config["general"]["seed_repos"]
 
@@ -210,49 +333,81 @@ def find_core_contributors(seed_repos, config):
         list: List of core contributor handles
     """
 
-    # Check if core contributors file already exists
-    output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
-    core_contrib_file = output_dir / "seed_contributors.csv"
-
-    if core_contrib_file.exists():
-        print("✓ Core contributors file already exists, loading from file...")
-        core_contrib_df = pd.read_csv(core_contrib_file)
-        core_contributors = core_contrib_df['contributor_handle'].unique().tolist()
-        print(f"✓ Loaded {len(core_contributors)} core contributors from {core_contrib_file}")
-        return core_contributors
-
+    print("👥 Step 2: Finding core contributors for seed repositories...")
     print(f"Finding contributors for {len(seed_repos)} seed repositories...")
 
-    # Configure parameters from config.toml
-    min_commits = config.get("analysis", {}).get("min_commits", 10)
-    date_filter_days = config.get("general", {}).get("days_back", 0)
+    # Load existing cache
+    repo_cache = load_repo_contributors_cache(config)
 
-    # Use repo_to_contributors module
-    contributors_df = repo_to_contributors.get_contributors_by_repos(
-        repo_identifiers=seed_repos,
-        min_commits=min_commits,
-        date_filter_days=date_filter_days,
-        config=config
-    )
+    # Filter repos that need processing (not in cache)
+    repos_to_process = [repo for repo in seed_repos if repo not in repo_cache]
 
-    if contributors_df.empty:
+    if repos_to_process:
+        print(f"  Processing {len(repos_to_process)} uncached seed repositories...")
+
+        # Configure parameters from config.toml
+        min_commits = config.get("analysis", {}).get("min_commits", 10)
+        date_filter_days = config.get("general", {}).get("days_back", 0)
+
+        # Use repo_to_contributors module for uncached repos
+        contributors_df = repo_to_contributors.get_contributors_by_repos(
+            repo_identifiers=repos_to_process,
+            min_commits=min_commits,
+            date_filter_days=date_filter_days,
+            config=config
+        )
+
+        if not contributors_df.empty:
+            # Build new cache data from query results
+            new_cache_data = {}
+            for _, row in contributors_df.iterrows():
+                repo = row['repository_name']
+                contributor = row['contributor_handle']
+                if repo not in new_cache_data:
+                    new_cache_data[repo] = []
+                if contributor not in new_cache_data[repo]:
+                    new_cache_data[repo].append(contributor)
+
+            # Update cache
+            repo_cache = update_repo_contributors_cache(new_cache_data, config)
+        else:
+            print("  No contributors found for uncached seed repositories")
+    else:
+        print(f"  All {len(seed_repos)} seed repositories found in cache")
+
+    # Collect all contributors from cached data for seed repos
+    all_repo_contributor_pairs = []
+
+    for repo in seed_repos:
+        if repo in repo_cache:
+            contributors = repo_cache[repo]
+            for contributor in contributors:
+                all_repo_contributor_pairs.append({
+                    'repository_name': repo,
+                    'contributor_handle': contributor
+                })
+
+    if all_repo_contributor_pairs:
+        contributors_df = pd.DataFrame(all_repo_contributor_pairs)
+
+        # Save contributors data
+        output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        core_contrib_file = output_dir / "seed_contributors.csv"
+        contributors_df.to_csv(core_contrib_file, index=False)
+        print(f"✓ Saved seed contributors: {core_contrib_file}")
+
+        # Get unique contributor handles
+        core_contributor_handles = contributors_df['contributor_handle'].unique().tolist()
+        print(f"✓ Found {len(core_contributor_handles)} core contributors")
+
+        # Update contributor-repos cache
+        update_contributor_repos_cache(contributors_df, config)
+
+        return core_contributor_handles
+    else:
         print("ERROR: No contributors found for seed repositories")
         return []
-
-    # Save contributors data
-    saved_file = repo_to_contributors.save_contributors_data(contributors_df)
-
-    # Get unique contributor handles, prioritizing top contributors
-    contributor_summary = contributors_df.groupby('contributor_handle').agg({
-        'total_commits': 'sum',
-        'repository_name': 'nunique',
-        'active_days': 'sum'
-    }).sort_values('total_commits', ascending=False)
-
-    # Get all core contributors (no artificial limit)
-    core_contributor_handles = contributor_summary.index.tolist()
-
-    return core_contributor_handles
 
 
 def find_extended_ecosystem(core_contributors, config):
@@ -348,17 +503,47 @@ def find_extended_repos_by_stars(core_contributors, config):
     min_commits = config.get("analysis", {}).get("min_commits", 10)
     max_extended_repos = config.get("analysis", {}).get("max_extended_repos", 200)
 
-    print(f"Finding extended repos from {len(core_contributors)} core contributors...")
+    # Load contributor-repos cache to filter out contributors we've already processed
+    contributor_cache = load_contributor_repos_cache(config)
+
+    # Filter out contributors that are already in the cache
+    uncached_contributors = [c for c in core_contributors if c not in contributor_cache]
+
+    if len(uncached_contributors) < len(core_contributors):
+        filtered_count = len(core_contributors) - len(uncached_contributors)
+        print(f"  Filtered out {filtered_count} cached contributors")
+
+    print(f"Finding extended repos from {len(uncached_contributors)} uncached core contributors...")
     print(f"  Filters: min_commits={min_commits}, min_core_contributors={min_core_contributors}")
     print(f"  Will select top {max_extended_repos} repos by star count")
 
+    if not uncached_contributors:
+        print("  All contributors are already cached - no new repositories to discover")
+        return []
+
+    # Use filtered contributors for processing
+    core_contributors = uncached_contributors
+
     # Process in chunks to avoid huge queries
-    chunk_size = 100  # Process 100 contributors at a time
+    chunk_size = 100
     all_repo_stats = {}
 
+    # Create chunks and queue
+    chunk_queue = deque()
     for i in range(0, len(core_contributors), chunk_size):
         chunk = core_contributors[i:i+chunk_size]
-        print(f"  Processing chunk {i//chunk_size + 1}/{(len(core_contributors) + chunk_size - 1)//chunk_size}")
+        chunk_id = i//chunk_size + 1
+        chunk_queue.append((chunk_id, chunk))
+
+    total_chunks = len(chunk_queue)
+    completed_chunks = 0
+
+    print(f"  Processing {total_chunks} chunks with queue system...")
+
+    # Process chunks with simple queue
+    while chunk_queue:
+        chunk_id, chunk = chunk_queue.popleft()
+        print(f"  Processing chunk {chunk_id} ({len(chunk)} contributors)...")
 
         try:
             chunk_results = _process_contributor_chunk(chunk, config, client, min_commits)
@@ -371,9 +556,17 @@ def find_extended_repos_by_stars(core_contributors, config):
                 else:
                     all_repo_stats[repo_name] = stats
 
+            completed_chunks += 1
+            progress = (completed_chunks / total_chunks) * 100
+            print(f"    ✓ Chunk {chunk_id} completed ({completed_chunks}/{total_chunks}, {progress:.1f}%)")
+
         except Exception as e:
-            print(f"    Chunk failed: {e}")
-            continue
+            error_msg = str(e) if str(e) else f"{type(e).__name__}: Unable to parse error message"
+            print(f"    ✗ Chunk {chunk_id} failed: {error_msg}")
+            print(f"    → Adding back to queue")
+            chunk_queue.append((chunk_id, chunk))
+
+    print(f"  ✓ All chunks completed! Found repositories: {len(all_repo_stats)}")
 
     if not all_repo_stats:
         print("✗ No extended repositories found")
@@ -422,69 +615,94 @@ def find_extended_repos_by_stars(core_contributors, config):
 
 def _process_contributor_chunk(contributors_chunk, config, client, min_commits):
     """Process a chunk of contributors and return repository statistics."""
-    contributors_str = "', '".join([c.replace("'", "''") for c in contributors_chunk])
+    try:
+        contributors_str = "', '".join([c.replace("'", "''") for c in contributors_chunk])
 
-    # Build date filter
-    date_filter = ""
-    date_filter_days = config.get("general", {}).get("days_back", 0)
-    if date_filter_days > 0:
-        from datetime import datetime, timedelta
-        cutoff_date = datetime.now() - timedelta(days=date_filter_days)
-        date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
+        # Build date filter
+        date_filter = ""
+        date_filter_days = config.get("general", {}).get("days_back", 0)
+        if date_filter_days > 0:
+            from datetime import datetime, timedelta
+            cutoff_date = datetime.now() - timedelta(days=date_filter_days)
+            date_filter = f"AND e.bucket_day >= DATE '{cutoff_date.strftime('%Y-%m-%d')}'"
 
-    # Get seed repos to exclude
-    seed_repos = config.get("general", {}).get("seed_repos", [])
-    seed_exclusion = ""
-    if seed_repos:
-        seed_conditions = []
-        for repo in seed_repos:
-            if '/' in repo:
-                org, name = repo.split('/', 1)
-                seed_conditions.append(f"(p.artifact_namespace = '{org}' AND p.artifact_name = '{name}')")
-        if seed_conditions:
-            seed_exclusion = f"AND NOT ({' OR '.join(seed_conditions)})"
+        # Get seed repos to exclude
+        seed_repos = config.get("general", {}).get("seed_repos", [])
+        seed_exclusion = ""
+        if seed_repos:
+            seed_conditions = []
+            for repo in seed_repos:
+                if '/' in repo:
+                    org, name = repo.split('/', 1)
+                    seed_conditions.append(f"(p.artifact_namespace = '{org}' AND p.artifact_name = '{name}')")
+            if seed_conditions:
+                seed_exclusion = f"AND NOT ({' OR '.join(seed_conditions)})"
 
-    # Build bot filter
-    filter_conditions = build_filter_conditions(config)
-    bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions.get('bot_filter') else ""
+        # Build bot filter
+        filter_conditions = build_filter_conditions(config)
+        bot_filter = f"AND {filter_conditions['bot_filter']}" if filter_conditions.get('bot_filter') else ""
 
-    # Simple query to get repo commits by contributor
-    query = f"""
-    SELECT
-        CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name,
-        u.artifact_name as contributor,
-        SUM(e.amount) as commits
-    FROM int_events_daily__github AS e
-    JOIN int_github_users AS u ON e.from_artifact_id = u.artifact_id
-    JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
-    WHERE u.artifact_name IN ('{contributors_str}')
-      AND e.event_type = 'COMMIT_CODE'
-      AND p.artifact_source = 'GITHUB'
-      {bot_filter}
-      {date_filter}
-      {seed_exclusion}
-    GROUP BY p.artifact_namespace, p.artifact_name, u.artifact_name
-    HAVING SUM(e.amount) >= {min_commits}
-    """
+        # Ensure min_commits is at least 1 to avoid huge result sets
+        effective_min_commits = max(min_commits, 1)
 
-    df = client.to_pandas(query)
-    if df.empty:
-        return {}
+        # Simple query to get repo commits by contributor
+        query = f"""
+        SELECT
+            CONCAT(p.artifact_namespace, '/', p.artifact_name) as repository_name,
+            u.artifact_name as contributor,
+            SUM(e.amount) as commits
+        FROM int_events_daily__github AS e
+        JOIN int_github_users AS u ON e.from_artifact_id = u.artifact_id
+        JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
+        WHERE u.artifact_name IN ('{contributors_str}')
+          AND e.event_type = 'COMMIT_CODE'
+          AND p.artifact_source = 'GITHUB'
+          {bot_filter}
+          {date_filter}
+          {seed_exclusion}
+        GROUP BY p.artifact_namespace, p.artifact_name, u.artifact_name
+        HAVING SUM(e.amount) >= {effective_min_commits}
+        """
 
-    # Aggregate by repository
-    repo_stats = {}
-    for _, row in df.iterrows():
-        repo = row['repository_name']
-        contributor = row['contributor']
-        commits = row['commits']
+        print(f"    Query with {len(contributors_chunk)} contributors, min_commits={effective_min_commits}")
 
-        if repo not in repo_stats:
-            repo_stats[repo] = {'contributors': set(), 'total_commits': 0}
+        df = client.to_pandas(query)
+        if df.empty:
+            print(f"    No repositories found for this chunk")
+            return {}
 
-        repo_stats[repo]['contributors'].add(contributor)
-        repo_stats[repo]['total_commits'] += commits
+        print(f"    Found {len(df)} repo-contributor pairs")
 
-    return repo_stats
+        # Aggregate by repository
+        repo_stats = {}
+        for _, row in df.iterrows():
+            repo = row['repository_name']
+            contributor = row['contributor']
+            commits = row['commits']
+
+            if repo not in repo_stats:
+                repo_stats[repo] = {'contributors': set(), 'total_commits': 0}
+
+            repo_stats[repo]['contributors'].add(contributor)
+            repo_stats[repo]['total_commits'] += commits
+
+        print(f"    Processed into {len(repo_stats)} unique repositories")
+        return repo_stats
+
+    except Exception as e:
+        error_type = type(e).__name__
+        error_msg = str(e) if str(e) else "Unable to parse error message"
+
+        # Provide specific error context
+        print(f"    ERROR in chunk processing ({error_type}): {error_msg}")
+        if "JSON" in error_msg or "Expecting value" in error_msg:
+            print(f"    → Likely API timeout or empty response")
+        elif "timeout" in error_msg.lower():
+            print(f"    → Query timeout - chunk may be too large")
+        elif "rate" in error_msg.lower():
+            print(f"    → Rate limiting - will retry with delay")
+
+        raise  # Re-raise the exception for retry handling
 
 
 def find_extended_contributors(extended_repos, config):
@@ -501,36 +719,73 @@ def find_extended_contributors(extended_repos, config):
     print(f"Finding contributors for {len(extended_repos)} extended repositories...")
 
     try:
-        # Configure parameters from config.toml
-        min_commits = config.get("analysis", {}).get("min_commits", 10)
-        date_filter_days = config.get("general", {}).get("days_back", 0)
+        # Load existing cache
+        repo_cache = load_repo_contributors_cache(config)
 
-        # Use repo_to_contributors module
-        extended_contributors_df = repo_to_contributors.get_contributors_by_repos(
-            repo_identifiers=extended_repos,
-            min_commits=min_commits,
-            date_filter_days=date_filter_days,
-            config=config
-        )
+        # Filter repos that need processing (not in cache)
+        repos_to_process = [repo for repo in extended_repos if repo not in repo_cache]
 
-        if extended_contributors_df.empty:
+        if repos_to_process:
+            print(f"  Processing {len(repos_to_process)} uncached repositories...")
+
+            # Configure parameters from config.toml
+            min_commits = config.get("analysis", {}).get("min_commits", 10)
+            date_filter_days = config.get("general", {}).get("days_back", 0)
+
+            # Use repo_to_contributors module for uncached repos
+            extended_contributors_df = repo_to_contributors.get_contributors_by_repos(
+                repo_identifiers=repos_to_process,
+                min_commits=min_commits,
+                date_filter_days=date_filter_days,
+                config=config
+            )
+
+            if not extended_contributors_df.empty:
+                # Build new cache data from query results
+                new_cache_data = {}
+                for _, row in extended_contributors_df.iterrows():
+                    repo = row['repository_name']
+                    contributor = row['contributor_handle']
+                    if repo not in new_cache_data:
+                        new_cache_data[repo] = []
+                    if contributor not in new_cache_data[repo]:
+                        new_cache_data[repo].append(contributor)
+
+                # Update cache
+                repo_cache = update_repo_contributors_cache(new_cache_data, config)
+            else:
+                print("  No contributors found for uncached extended repositories")
+        else:
+            print(f"  All {len(extended_repos)} repositories found in cache")
+
+        # Collect all contributors from cached data for extended repos
+        all_repo_contributor_pairs = []
+
+        for repo in extended_repos:
+            if repo in repo_cache:
+                contributors = repo_cache[repo]
+                for contributor in contributors:
+                    all_repo_contributor_pairs.append({
+                        'repository_name': repo,
+                        'contributor_handle': contributor
+                    })
+
+        if all_repo_contributor_pairs:
+            filtered_extended_contributors = pd.DataFrame(all_repo_contributor_pairs)
+
+            # Save extended contributors data
+            output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
+            extended_contrib_file = output_dir / "extended_contributors.csv"
+            filtered_extended_contributors.to_csv(extended_contrib_file, index=False)
+            print(f"✓ Saved extended contributors: {extended_contrib_file}")
+
+            # Update contributor-repos cache
+            update_contributor_repos_cache(filtered_extended_contributors, config)
+
+            return filtered_extended_contributors
+        else:
             print("No extended contributors found")
             return pd.DataFrame()
-
-        # No limits - keep all contributors
-        filtered_extended_contributors = extended_contributors_df
-
-        # Save extended contributors data with custom filename
-        output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
-        extended_contrib_file = output_dir / "extended_contributors.csv"
-        # Only save specified columns
-        filtered_for_save = filtered_extended_contributors[['repository_name', 'contributor_handle']]
-
-        # Save extended contributors data
-        filtered_for_save.to_csv(extended_contrib_file, index=False)
-        print(f"✓ Saved extended contributors: {extended_contrib_file}")
-
-        return filtered_extended_contributors
 
     except Exception as e:
         error_msg = str(e) if str(e) else f"{type(e).__name__}: Unable to parse error message"
@@ -549,25 +804,11 @@ def main(config_path="config.toml"):
     try:
         output_dir = Path(config.get("general", {}).get("output_dir", "./raw"))
 
-        # Step 1: Load seed repositories from configuration
-        seed_repos_file = output_dir / "seed_repos.csv"
-        if seed_repos_file.exists():
-            print("✓ Step 1: Seed repositories file already exists, loading from file...")
-            seed_repos_df = pd.read_csv(seed_repos_file)
-            seed_repos = seed_repos_df['repository_name'].tolist()
-            print(f"✓ Loaded {len(seed_repos)} seed repositories from {seed_repos_file}")
-        else:
-            seed_repos = discover_seed_repositories(config)
+        # Step 1: Discover seed repositories from configuration
+        seed_repos = discover_seed_repositories(config)
 
         # Step 2: Find core contributors for seed repositories
-        core_contrib_file = output_dir / "seed_contributors.csv"
-        if core_contrib_file.exists():
-            print("✓ Step 2: Core contributors file already exists, loading from file...")
-            core_contrib_df = pd.read_csv(core_contrib_file)
-            core_contributors = core_contrib_df['contributor_handle'].unique().tolist()
-            print(f"✓ Loaded {len(core_contributors)} core contributors from {core_contrib_file}")
-        else:
-            core_contributors = find_core_contributors(seed_repos, config)
+        core_contributors = find_core_contributors(seed_repos, config)
 
         # Check if extended analysis is enabled
         extended_analysis_enabled = config.get("analysis", {}).get("extended_analysis", True)
@@ -576,37 +817,24 @@ def main(config_path="config.toml"):
             print("📊 Extended analysis is enabled")
 
             # Step 3: Find extended repositories that core contributors contributed to
-            extended_repos_file = output_dir / "extended_repos.csv"
-            if extended_repos_file.exists():
-                print("✓ Step 3: Extended repos file already exists, loading from file...")
-                extended_repos_df = pd.read_csv(extended_repos_file)
-                extended_repos = extended_repos_df['repository_name'].tolist()
-                print(f"✓ Loaded {len(extended_repos)} extended repositories from {extended_repos_file}")
-            else:
-                print("🔍 Step 3: Finding extended repositories...")
-                extended_repos = retry_extended_analysis(
-                    find_extended_repos_by_stars,
-                    core_contributors,
-                    config
-                )
+            print("🔍 Step 3: Finding extended repositories...")
+            extended_repos = retry_extended_analysis(
+                find_extended_repos_by_stars,
+                core_contributors,
+                config
+            )
 
             # Step 4: Find extended contributors from extended repositories
-            extended_contrib_file = output_dir / "extended_contributors.csv"
-            if extended_contrib_file.exists():
-                print("✓ Step 4: Extended contributors file already exists, loading from file...")
-                extended_contributors_df = pd.read_csv(extended_contrib_file)
-                print(f"✓ Loaded {len(extended_contributors_df)} extended contributor records from {extended_contrib_file}")
+            if extended_repos:
+                print("👥 Step 4: Finding extended contributors...")
+                extended_contributors_df = retry_extended_analysis(
+                    find_extended_contributors,
+                    extended_repos,
+                    config
+                )
             else:
-                if extended_repos:
-                    print("👥 Step 4: Finding extended contributors...")
-                    extended_contributors_df = retry_extended_analysis(
-                        find_extended_contributors,
-                        extended_repos,
-                        config
-                    )
-                else:
-                    print("⚠️  No extended repositories found - skipping extended contributors")
-                    extended_contributors_df = pd.DataFrame()
+                print("⚠️  No extended repositories found - skipping extended contributors")
+                extended_contributors_df = pd.DataFrame()
         else:
             print("⚠️  Extended analysis is disabled - skipping extended repositories and contributors")
             print("   Only seed repositories and their core contributors will be analyzed")

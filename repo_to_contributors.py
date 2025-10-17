@@ -51,12 +51,12 @@ def build_filter_conditions(config):
     }
 
 
-def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=0, config=None):
+def get_contributors_by_repos(repo_identifiers, min_commits=10, date_filter_days=0, config=None):
     """
-    Find all contributors for given repositories.
+    Find contributors for a list of repositories using OSO GitHub data
 
     Args:
-        repo_identifiers (list): List of repo identifiers in format ["org/repo", "org/repo"]
+        repo_identifiers (list): List of repository identifiers in "org/repo" format
         min_commits (int): Minimum number of commits to be considered a contributor
         date_filter_days (int): Number of days back to consider (0 = all time)
         config (dict): Configuration dictionary for filters
@@ -123,6 +123,7 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
     # Create job queue for retry logic
     job_queue = [(batch_num, batch_repos, len(batches)) for batch_num, batch_repos in batches]
     all_contributors = []
+    repos_with_contributors = set()
 
     # Process jobs in queue with retry logic
     while job_queue:
@@ -162,9 +163,8 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
             FROM int_events_daily__github AS e
             JOIN int_github_users AS u
               ON e.from_artifact_id = u.artifact_id
-            JOIN artifacts_by_project_v1 AS p
+            JOIN int_artifacts__github AS p
               ON e.to_artifact_id = p.artifact_id
-              AND p.artifact_source = 'GITHUB'
             WHERE
               e.event_type = 'COMMIT_CODE'
               AND ({repo_condition_str})
@@ -182,6 +182,9 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
             if not batch_contributors_df.empty:
                 print(f"    Batch {batch_num}: Found {len(batch_contributors_df)} contributor records")
                 all_contributors.append(batch_contributors_df)
+                # Track which repos had contributors in this batch
+                batch_repos_with_contributors = set(batch_contributors_df['repository_name'].unique())
+                repos_with_contributors.update(batch_repos_with_contributors)
             else:
                 print(f"    Batch {batch_num}: No contributors found")
 
@@ -206,7 +209,15 @@ def get_contributors_by_repos(repo_identifiers, min_commits=1, date_filter_days=
         print(f"✓ Found {len(contributors_df)} contributor records in {duration:.1f}s")
         return contributors_df
     else:
+        # Show which repositories had no contributors
+        repos_without_contributors = [repo for repo in repo_identifiers if repo not in repos_with_contributors]
         print(f"✗ No contributors found for the specified repositories (completed in {duration:.1f}s)")
+        if repos_without_contributors:
+            print(f"  Repositories with no contributors ({len(repos_without_contributors)}):")
+            for repo in sorted(repos_without_contributors)[:10]:  # Show first 10
+                print(f"    - {repo}")
+            if len(repos_without_contributors) > 10:
+                print(f"    ... and {len(repos_without_contributors) - 10} more")
         return pd.DataFrame()
 
 
