@@ -653,7 +653,7 @@ def _process_contributor_chunk(contributors_chunk, config, client, min_commits):
             SUM(e.amount) as commits
         FROM int_events_daily__github AS e
         JOIN int_github_users AS u ON e.from_artifact_id = u.artifact_id
-        JOIN artifacts_by_project_v1 AS p ON e.to_artifact_id = p.artifact_id
+        JOIN artifacts_v1 AS p ON e.to_artifact_id = p.artifact_id
         WHERE u.artifact_name IN ('{contributors_str}')
           AND e.event_type = 'COMMIT_CODE'
           AND p.artifact_source = 'GITHUB'

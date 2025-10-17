@@ -163,10 +163,11 @@ def get_contributors_by_repos(repo_identifiers, min_commits=10, date_filter_days
             FROM int_events_daily__github AS e
             JOIN int_github_users AS u
               ON e.from_artifact_id = u.artifact_id
-            JOIN int_artifacts__github AS p
+            JOIN artifacts_v1 AS p
               ON e.to_artifact_id = p.artifact_id
             WHERE
-              e.event_type = 'COMMIT_CODE'
+              p.artifact_source = 'GITHUB'
+              AND e.event_type = 'COMMIT_CODE'
               AND ({repo_condition_str})
               AND u.artifact_name IS NOT NULL
               AND u.artifact_name != ''

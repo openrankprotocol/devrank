@@ -62,8 +62,9 @@ def build_user_to_repo_query(users_str, repo_condition_str, date_filter="", bot_
         SUM(e.amount) AS amount
     FROM int_events_daily__github AS e
     JOIN int_github_users AS u ON e.from_artifact_id = u.artifact_id
-    JOIN int_artifacts__github AS p ON e.to_artifact_id = p.artifact_id
-    WHERE u.artifact_name IN ('{users_str}')
+    JOIN artifacts_v1 AS p ON e.to_artifact_id = p.artifact_id
+    WHERE p.artifact_source = 'GITHUB'
+      AND u.artifact_name IN ('{users_str}')
       AND ({repo_condition_str})
       AND e.event_type IN ('COMMIT_CODE', 'PULL_REQUEST_OPENED', 'PULL_REQUEST_MERGED', 'STARRED', 'ISSUE_OPENED', 'FORKED')
       {bot_filter}
@@ -163,8 +164,9 @@ def extract_detailed_interactions_from_batch(batch_pairs, client, date_filter=""
         SUM(e.amount) AS total_amount
     FROM int_events_daily__github AS e
     JOIN int_github_users AS u ON e.from_artifact_id = u.artifact_id
-    JOIN int_artifacts__github AS p ON e.to_artifact_id = p.artifact_id
-    WHERE u.artifact_name IN ('{users_str}')
+    JOIN artifacts_v1 AS p ON e.to_artifact_id = p.artifact_id
+    WHERE p.artifact_source = 'GITHUB'
+      AND u.artifact_name IN ('{users_str}')
       AND ({repo_condition_str})
       AND e.event_type IN ('COMMIT_CODE', 'PULL_REQUEST_OPENED', 'PULL_REQUEST_MERGED', 'STARRED', 'ISSUE_OPENED', 'FORKED')
       {bot_filter}
@@ -209,8 +211,9 @@ def build_repo_to_user_query(users_str, repo_condition_str, date_filter="", bot_
         SUM(e.amount) AS amount
     FROM int_events_daily__github AS e
     JOIN int_github_users AS u ON e.from_artifact_id = u.artifact_id
-    JOIN int_artifacts__github AS p ON e.to_artifact_id = p.artifact_id
-    WHERE u.artifact_name IN ('{users_str}')
+    JOIN artifacts_v1 AS p ON e.to_artifact_id = p.artifact_id
+    WHERE p.artifact_source = 'GITHUB'
+      AND u.artifact_name IN ('{users_str}')
       AND ({repo_condition_str})
       AND e.event_type IN ('COMMIT_CODE', 'PULL_REQUEST_OPENED', 'PULL_REQUEST_MERGED')
       {bot_filter}

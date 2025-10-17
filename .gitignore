@@ -6,6 +6,7 @@ seed/**
 tmp/**
 cache/**
 output/**
+process_protocol_guild.py
 
 __pycache__
 

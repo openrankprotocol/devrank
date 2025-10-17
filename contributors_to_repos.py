@@ -123,9 +123,10 @@ def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_or
         FROM int_events_daily__github AS e
         JOIN int_github_users AS u
           ON e.from_artifact_id = u.artifact_id
-        JOIN int_artifacts__github AS p
+        JOIN artifacts_v1 AS p
           ON e.to_artifact_id = p.artifact_id
         WHERE
+          p.artifact_source = 'GITHUB'
           e.event_type = 'COMMIT_CODE'
           AND u.artifact_name IN ('{contributors_str}')
           AND u.artifact_name IS NOT NULL
@@ -168,9 +169,10 @@ def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_or
                 CONCAT(artifact_namespace, '/', artifact_name) as repository_name,
                 artifact_id,
                 artifact_source_id
-            FROM int_artifacts__github
+            FROM artifacts_v1
             WHERE
-              ({org_condition_str})
+              artifact_source = 'GITHUB'
+              AND ({org_condition_str})
               AND artifact_namespace IS NOT NULL
               AND artifact_name IS NOT NULL
             ORDER BY artifact_namespace, artifact_name
