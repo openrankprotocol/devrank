@@ -56,18 +56,17 @@ def build_filter_conditions(config):
 
 def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_org_repos=True, date_filter_days=0, config=None):
     """
-    Find all repositories for given contributors, plus organization repositories.
+    Find all repositories for given contributors.
 
     Args:
         contributor_identifiers (list): List of contributor handles (GitHub usernames)
         min_commits (int): Minimum number of commits to be considered a contribution
-        include_org_repos (bool): Whether to include all repos from same organizations
+        include_org_repos (bool): Unused parameter (kept for compatibility)
         date_filter_days (int): Number of days back to consider (0 = all time)
 
     Returns:
-        dict: Contains two DataFrames:
+        dict: Contains DataFrame:
             - 'contributed_repos': Repositories the contributors directly worked on
-            - 'organization_repos': All repositories from the same organizations
     """
 
     # Get API key
@@ -144,62 +143,23 @@ def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_or
 
         if contributed_repos_df.empty:
             print("✗ No repositories found for the specified contributors")
-            return {'contributed_repos': pd.DataFrame(), 'organization_repos': pd.DataFrame()}
+            return {'contributed_repos': pd.DataFrame()}
 
         print(f"✓ Found {len(contributed_repos_df)} direct contribution records")
 
-        # Step 2: Find all organizations these contributors work with
-        organizations = contributed_repos_df['organization'].unique().tolist()
-        print(f"✓ Identified {len(organizations)} organizations: {', '.join(organizations[:5])}{'...' if len(organizations) > 5 else ''}")
-
-        organization_repos_df = pd.DataFrame()
-
-        if include_org_repos and organizations:
-            # Build organization conditions
-            org_conditions = []
-            for org in organizations:
-                org_conditions.append(f"artifact_namespace = '{org}'")
-
-            org_condition_str = " OR ".join(org_conditions)
-
-            org_repos_query = f"""
-            SELECT DISTINCT
-                artifact_namespace as organization,
-                artifact_name as repo_name,
-                CONCAT(artifact_namespace, '/', artifact_name) as repository_name,
-                artifact_id,
-                artifact_source_id
-            FROM artifacts_v1
-            WHERE
-              artifact_source = 'GITHUB'
-              AND ({org_condition_str})
-              AND artifact_namespace IS NOT NULL
-              AND artifact_name IS NOT NULL
-            ORDER BY artifact_namespace, artifact_name
-            """
-
-            organization_repos_df = client.to_pandas(org_repos_query)
-
-            if not organization_repos_df.empty:
-                print(f"✓ Found {len(organization_repos_df)} total repositories across all organizations")
-            else:
-                print("✗ No organization repositories found")
-
         return {
-            'contributed_repos': contributed_repos_df,
-            'organization_repos': organization_repos_df
+            'contributed_repos': contributed_repos_df
         }
 
     except Exception as e:
         print(f"ERROR: Query failed: {e}")
-        return {'contributed_repos': pd.DataFrame(), 'organization_repos': pd.DataFrame()}
+        return {'contributed_repos': pd.DataFrame()}
 
 
 def save_repos_data(repos_data, output_dir="./raw"):
     """Save repositories data to CSV files."""
 
     contributed_repos_df = repos_data['contributed_repos']
-    organization_repos_df = repos_data['organization_repos']
 
     # Create output directory
     output_path = Path(output_dir)
@@ -209,18 +169,10 @@ def save_repos_data(repos_data, output_dir="./raw"):
 
     # Save contributed repositories
     if not contributed_repos_df.empty:
-        contrib_file = output_path / "contributor_repos.csv"
+        contrib_file = output_path / "contributed_repos.csv"
         # Only save specified columns
-        filtered_df = contributed_repos_df[['organization', 'repo_name']]
-        filtered_df.to_csv(contrib_file, index=False)
+        filtered_contrib_df = contributed_repos_df[['organization', 'repo_name']]
+        filtered_contrib_df.to_csv(contrib_file, index=False)
         saved_files.append(str(contrib_file))
-
-    # Save organization repositories
-    if not organization_repos_df.empty:
-        org_file = output_path / "organization_repos.csv"
-        # Only save specified columns
-        filtered_org_df = organization_repos_df[['organization', 'repo_name']]
-        filtered_org_df.to_csv(org_file, index=False)
-        saved_files.append(str(org_file))
 
     return saved_files

@@ -208,7 +208,11 @@ def get_contributors_by_repos(repo_identifiers, min_commits=10, date_filter_days
     if all_contributors:
         contributors_df = pd.concat(all_contributors, ignore_index=True)
         print(f"✓ Found {len(contributors_df)} contributor records in {duration:.1f}s")
-        return contributors_df
+
+        # Return DataFrame with only repo_name and contributor columns
+        result_df = contributors_df[['repository_name', 'contributor_handle']].copy()
+
+        return result_df
     else:
         # Show which repositories had no contributors
         repos_without_contributors = [repo for repo in repo_identifiers if repo not in repos_with_contributors]
@@ -220,23 +224,3 @@ def get_contributors_by_repos(repo_identifiers, min_commits=10, date_filter_days
             if len(repos_without_contributors) > 10:
                 print(f"    ... and {len(repos_without_contributors) - 10} more")
         return pd.DataFrame()
-
-
-def save_contributors_data(contributors_df, output_dir="./raw"):
-    """Save contributors data to CSV file."""
-
-    if contributors_df.empty:
-        print("No data to save")
-        return None
-
-    # Create output directory
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    # Save to CSV (always overwrite, no timestamp)
-    csv_file = output_path / "seed_contributors.csv"
-    # Only save specified columns
-    filtered_df = contributors_df[['repository_name', 'contributor_handle']]
-    filtered_df.to_csv(csv_file, index=False)
-
-    return str(csv_file)
