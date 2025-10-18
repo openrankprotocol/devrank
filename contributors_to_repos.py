@@ -154,25 +154,3 @@ def get_repos_by_contributors(contributor_identifiers, min_commits=1, include_or
     except Exception as e:
         print(f"ERROR: Query failed: {e}")
         return {'contributed_repos': pd.DataFrame()}
-
-
-def save_repos_data(repos_data, output_dir="./raw"):
-    """Save repositories data to CSV files."""
-
-    contributed_repos_df = repos_data['contributed_repos']
-
-    # Create output directory
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    saved_files = []
-
-    # Save contributed repositories
-    if not contributed_repos_df.empty:
-        contrib_file = output_path / "contributed_repos.csv"
-        # Only save specified columns
-        filtered_contrib_df = contributed_repos_df[['organization', 'repo_name']]
-        filtered_contrib_df.to_csv(contrib_file, index=False)
-        saved_files.append(str(contrib_file))
-
-    return saved_files
