@@ -1,0 +1,11 @@
+i,v
+huggingface/transformers,0.19999999999999998
+huggingface/diffusers,0.19999999999999998
+huggingface/trl,0.19999999999999998
+microsoft/autogen,0.06666666666666667
+microsoft/semantic-kernel,0.06666666666666667
+microsoft/deepspeed,0.06666666666666667
+microsoft/onnxruntime,0.05
+aws/sagemaker-python-sdk,0.05
+aws/deep-learning-containers,0.05
+google/gemma.cpp,0.05

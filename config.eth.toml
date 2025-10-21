@@ -1,4 +1,4 @@
-# Crypto Ecosystem Analyzer Configuration - Organization-Based
+# Crypto Ecosystem Analyzer Configuration - Repository-Based
 # This file controls all the parameters for the analysis
 # Updated for comprehensive OSO schema with reasonable performance limits
 
@@ -11,29 +11,56 @@ output_dir = "./raw"
 days_back = 730  # 0 = all time, 365 = last year, 730 = last 2 years
 
 # List of seed repositories to analyze
-# Core repositories that define the AI ecosystem
+# Core repositories that define the ecosystem
 seed_repos = [
-    "tensorflow/tensorflow",
-    "pytorch/pytorch",
-    "huggingface/transformers",
-    "huggingface/datasets",
-    "langchain-ai/langchain",
-    "significant-gravitas/autogpt",
-    "stability-ai/stablediffusion",
-    "openai/openai-python",
-    "deepseek-ai/deepseek-llm",
-    "laion-ai/open-assistant",
-    "microsoft/semantic-kernel",
-    "openai/codex",
-    "farama-foundation/gymnasium",
-    "openai/whisper",
-    "microsoft/lightgbm",
-    "microsoft/onnxruntime",
-    "microsoft/nni",
-    "scikit-learn/scikit-learn",
-    "dmlc/xgboost",
-    "nvidia/Megatron-LM",
-    "nvidia/tensorrt-llm"
+    "ethereum/go-ethereum",
+    "ethereum-optimism/optimism",
+    "op-rs/kona",
+    "offchainlabs/nitro",
+    "offchainlabs/prysm",
+    "paradigmxyz/reth",
+    "erigontech/erigon",
+    "chainsafe/lodestar",
+    "nethermindeth/nethermind",
+    "bluealloy/revm",
+    "ethereum/solidity",
+    "openzeppelin/openzeppelin-contracts",
+    "foundry-rs/foundry",
+    "uniswap/v3-core",
+    "uniswap/v4-core",
+    "uniswap/interface",
+    "aave/aave-v3-core",
+    "smartcontractkit/chainlink",
+    "nomicfoundation/hardhat",
+    "metamask/metamask-extension",
+    "consensys/linea-monorepo",
+    "consensys/teku",
+    "succinctlabs/sp1",
+    "risc0/risc0",
+    "scroll-tech/scroll",
+    "taikoxyz/taiko-mono",
+    "taikochain/taiko-mono",
+    "pegasyseng/artemis",
+    "pegasyseng/beaconchain",
+    "pegasyseng/teku",
+    "oraclekit/chainlink",
+    "oraclekit/smart_oracle",
+    "uniswap/uniswap-interface",
+    "uniswap/uniswap-v3-core",
+    "gakonst/dapptools-rs",
+    "gakonst/foundry",
+    "openzep/zep",
+    "openzep/zep-solidity",
+    "openzeppelin/openzeppelin-solidity",
+    "openzeppelin/zep-solidity",
+    "openzeppelin/zeppelin-solidity",
+    "argotorg/solidity",
+    "tkstanczak/nethermind",
+    "ledgerwatch/erigon",
+    "prysmaticlabs/geth-sharding",
+    "prysmaticlabs/prysm",
+    "anton-rs/kona",
+    "ethereum-optimism/kona"
 ]
 
 # Analysis configuration
@@ -41,11 +68,11 @@ seed_repos = [
 # Enable extended repository and contributor analysis (set to false to only analyze seed repos)
 extended_analysis = true
 # Minimum commits threshold for all analysis (repositories, core contributors, extended contributors)
-min_commits = 2
+min_commits = 1
 # Minimum core contributors threshold for all analysis (seed repos, extended repos, all phases)
 min_core_contributors = 2
 # Maximum number of extended repositories to include (sorted by stars)
-max_extended_repos = 200
+max_extended_repos = 1000
 
 
 # Event type weights for trust calculations
@@ -64,6 +91,7 @@ forked = 1
 commit_code = 3
 pull_request_opened = 5
 pull_request_merged = 1
+
 
 [filters]
 # Contributor filters

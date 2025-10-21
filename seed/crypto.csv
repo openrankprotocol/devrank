@@ -1,0 +1,10 @@
+i,v
+ethereum/go-ethereum,0.2
+ethereum-optimism/optimism,0.2
+ethereum/solidity,0.1
+openzeppelin/openzeppelin-contracts,0.1
+foundry-rs/foundry,0.1
+uniswap/v3-core,0.1
+smartcontractkit/chainlink,0.1
+nomicfoundation/hardhat,0.05
+metamask/metamask-extension,0.05

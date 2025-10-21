@@ -13,20 +13,22 @@ days_back = 730  # 0 = all time, 365 = last year, 730 = last 2 years
 # List of seed repositories to analyze
 # Core repositories that define the crypto x AI ecosystem
 seed_repos = [
-    "fetchai/fetchd",
-    "fetchai/cosmpy",
+    "fetchai/uagents",
     "zkonduit/ezkl",
-    "lagrange-labs/lagrange-node",
-    "gensyn-ai/gensyn-protocol",
+    "lagrange-labs/deep-prove",
+    "gensyn-ai/rl-swarm",
     "elizaos/eliza",
-    "virtual-protocol/virtuals-python",
+    "game-by-virtuals/game-python",
+    "game-by-virtuals/game-node",
     "ritual-net/infernet-sdk",
-    "PrimeIntellect-ai/OpenDiloco",
-    "risc0/risc0",
-    "oceanprotocol/ocean.py",
+    "ritual-net/infernet-node",
+    "primeintellect-ai/opendiloco",
+    "primeintellect-ai/verifiers",
     "phala-network/phala-blockchain",
     "opentensor/bittensor",
-    "singnet/snet-daemon"
+    "opentensor/subtensor",
+    "singnet/snet-daemon",
+    "sentient-agi/roma"
 ]
 
 # Analysis configuration
