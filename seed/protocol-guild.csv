@@ -23,7 +23,6 @@ tkstanczak/nethermind,0.024999999999999998
 offchainlabs/prysm,0.024999999999999998
 prysmaticlabs/geth-sharding,0.024999999999999998
 prysmaticlabs/prysm,0.024999999999999998
-
 ethereum/eth1.0-specs,0.008333333333333333
 ethereum/eth1.0-apis,0.008333333333333333
 ethereum/pm,0.008333333333333333
@@ -48,7 +47,6 @@ karalabe/hive,0.008333333333333333
 sifraitech/rust-kzg,0.008333333333333333
 sifraitech/kzg,0.008333333333333333
 protocolguild/documentation,0.008333333333333333
-
 protocolguild/membership,0.007692307692307693
 sigp/lighthouse,0.007692307692307693
 status-im/nimbus-eth1,0.007692307692307693
