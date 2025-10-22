@@ -28,7 +28,18 @@ seed_repos = [
     "opentensor/bittensor",
     "opentensor/subtensor",
     "singnet/snet-daemon",
-    "sentient-agi/roma"
+    "sentient-agi/roma",
+    "salzubi401/roma",
+    "opentensor/subtensor_exodus",
+    "opentensor/subtensorv3",
+    "opentensor/bittensor-substrate",
+    "willccbb/verifiers",
+    "lalalune/eliza",
+    "rubyresearch/agent",
+    "rubyresearch/eliza",
+    "rubyresearch/rubyagent",
+    "ai16z/eliza",
+    "jasonmorton/halo2deeplearning",
 ]
 
 # Analysis configuration
@@ -40,7 +51,7 @@ min_commits = 2
 # Minimum core contributors threshold for all analysis (seed repos, extended repos, all phases)
 min_core_contributors = 2
 # Maximum number of extended repositories to include (sorted by stars)
-max_extended_repos = 200
+max_extended_repos = 1000
 
 
 [filters]

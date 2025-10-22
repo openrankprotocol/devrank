@@ -16,6 +16,9 @@ seed_repos = [
     "tensorflow/tensorflow",
     "pytorch/pytorch",
     "huggingface/transformers",
+    "opencv/opencv",
+    "infiniflow/ragflow",
+    "keras-team/keras",
     "huggingface/datasets",
     "langchain-ai/langchain",
     "significant-gravitas/autogpt",
@@ -32,8 +35,16 @@ seed_repos = [
     "microsoft/nni",
     "scikit-learn/scikit-learn",
     "dmlc/xgboost",
-    "nvidia/Megatron-LM",
-    "nvidia/tensorrt-llm"
+    "nvidia/megatron-lm",
+    "nvidia/tensorrt-llm",
+    "tqchen/xgboost",
+    "laion-ai/open-chat-gpt",
+    "significant-gravitas/autogpt",
+    "torantulino/auto-gpt",
+    "torantulino/entrepreneur-gpt",
+    "hwchase17/langchain",
+    "fchollet/keras",
+    "itseez/opencv",
 ]
 
 # Analysis configuration
@@ -45,7 +56,7 @@ min_commits = 2
 # Minimum core contributors threshold for all analysis (seed repos, extended repos, all phases)
 min_core_contributors = 2
 # Maximum number of extended repositories to include (sorted by stars)
-max_extended_repos = 200
+max_extended_repos = 1000
 
 
 # Event type weights for trust calculations

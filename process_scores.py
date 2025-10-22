@@ -10,7 +10,8 @@ This script processes score files from the scores/ directory by:
 5. Saving results to output/ directory with transformation suffixes
 
 Transformations available:
-- Logarithmic: log transformation to linearize exponential data
+- Square Root: sqrt transformation for gentle compression of higher values
+- Logarithmic: log transformation (first scaled to 1-10 range) to linearize exponential data
 - Quantile: uniform distribution preserving rank order
 
 Usage:
@@ -19,14 +20,17 @@ Usage:
 Requirements:
     - pandas (install with: pip install pandas)
     - numpy (install with: pip install numpy)
-    - scipy (optional, for quantile transformation - will use fallback if not available)
+    - scipy (for quantile transformation)
     - CSV files in scores/ directory with columns 'i' (identifier) and 'v' (score)
 
 Output:
     - Creates output/ directory if it doesn't exist
     - For each input file (e.g., ai.csv), creates:
-      - {filename}_orgs_log.csv: Organizations with logarithmic transformation
-      - {filename}_devs_log.csv: Developers with logarithmic transformation
+      - {filename}_orgs_sqrt.csv: Organizations with square root transformation
+      - {filename}_devs_sqrt.csv: Developers with square root transformation
+
+      - {filename}_orgs_log.csv: Organizations with logarithmic transformation (scaled 1-10 first)
+      - {filename}_devs_log.csv: Developers with logarithmic transformation (scaled 1-10 first)
 
       - {filename}_orgs_quantile.csv: Organizations with quantile transformation
       - {filename}_devs_quantile.csv: Developers with quantile transformation
@@ -38,13 +42,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-# Try to import scipy, use fallback if not available
-try:
-    from scipy import stats
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-    print("Warning: scipy not available, using fallback for quantile transformation")
+from scipy import stats
 
 
 def normalize_scores(df):
@@ -78,17 +76,15 @@ def normalize_scores(df):
     return df_normalized
 
 
-def apply_log_transformation(df):
-    """Apply logarithmic transformation to scores"""
+def apply_sqrt_transformation(df):
+    """Apply square root transformation to scores"""
     if len(df) == 0:
         return df
 
     df_transformed = df.copy()
-    min_score = df['v'].min()
-    epsilon = min_score * 0.1 if min_score > 0 else 0.000001
 
-    # Apply log transformation
-    df_transformed['v'] = np.log(df['v'] + epsilon)
+    # Apply sqrt transformation
+    df_transformed['v'] = np.sqrt(df['v'])
 
     # Normalize to 0-1 range
     min_val = df_transformed['v'].min()
@@ -107,8 +103,42 @@ def apply_log_transformation(df):
     return df_transformed
 
 
+def apply_log_transformation(df):
+    """Apply logarithmic transformation to scores (first scale to 1-10, then log)"""
+    if len(df) == 0:
+        return df
 
+    df_transformed = df.copy()
 
+    # First normalize to 0-1 range
+    min_val = df['v'].min()
+    max_val = df['v'].max()
+    if max_val != min_val:
+        df_transformed['v'] = (df['v'] - min_val) / (max_val - min_val)
+    else:
+        df_transformed['v'] = 1.0 / len(df)
+
+    # Map to 1-10 range
+    df_transformed['v'] = df_transformed['v'] * 9 + 1
+
+    # Apply log transformation
+    df_transformed['v'] = np.log(df_transformed['v'])
+
+    # Normalize back to 0-1 range
+    min_log = df_transformed['v'].min()
+    max_log = df_transformed['v'].max()
+    if max_log != min_log:
+        df_transformed['v'] = (df_transformed['v'] - min_log) / (max_log - min_log)
+    else:
+        df_transformed['v'] = 1.0 / len(df)
+
+    # Map to 100-1000 range
+    df_transformed['v'] = df_transformed['v'] * 900 + 100
+
+    # Round to 2 decimal places
+    df_transformed['v'] = df_transformed['v'].round(2)
+
+    return df_transformed
 
 def apply_quantile_transformation(df):
     """Apply quantile-based uniform distribution transformation"""
@@ -117,15 +147,8 @@ def apply_quantile_transformation(df):
 
     df_transformed = df.copy()
 
-    if SCIPY_AVAILABLE:
-        # Use scipy for optimal performance
-        df_transformed['v'] = stats.rankdata(df['v']) / len(df['v'])
-    else:
-        # Fallback implementation: create rank mapping preserving original order
-        sorted_df = df.sort_values('v', ascending=True, kind='stable')
-        ranks = np.arange(1, len(sorted_df) + 1) / len(sorted_df)
-        rank_mapping = dict(zip(sorted_df.index, ranks))
-        df_transformed['v'] = df_transformed.index.map(rank_mapping)
+    # Use scipy for quantile transformation
+    df_transformed['v'] = stats.rankdata(df['v']) / len(df['v'])
 
     # Map to 100-1000 range
     df_transformed['v'] = df_transformed['v'] * 900 + 100
@@ -153,6 +176,7 @@ def split_and_process_scores(input_file, output_dir):
 
     # Apply transformations
     transformations = {
+        'sqrt': apply_sqrt_transformation,
         'log': apply_log_transformation,
         'quantile': apply_quantile_transformation
     }
