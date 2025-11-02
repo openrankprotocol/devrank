@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-GitHub Stars Ranking for Solana Repositories using OSO
+Repository Commit Finder for Solana Repositories using OSO
 
-This script loads repositories from raw/Solana-export.csv, fetches their GitHub stars
-using the Open Source Observer (OSO) database, and displays the top 100 repositories
-sorted by star count.
+This script loads repositories from raw/Solana-export.csv, fetches their commit counts
+using the Open Source Observer (OSO) database, and displays the top repositories
+sorted by commit count.
 
 Prerequisites:
 1. Create account at www.opensource.observer
@@ -13,7 +13,7 @@ Prerequisites:
 4. Install dependencies: pip install pyoso pandas python-dotenv
 
 Usage:
-    python github_stars_ranking.py [--test] [--top N] [--limit N]
+    python find_repos.py [--test] [--top N] [--limit N]
 
     --test: Run filtering tests only
     --top N: Show top N repositories (default: 100)
@@ -182,11 +182,10 @@ def chunk_list(lst, chunk_size):
     for i in range(0, len(lst), chunk_size):
         yield lst[i:i + chunk_size]
 
-def load_cache_stars_and_commits():
-    """Load cached STARRED and COMMIT_CODE events from all cache files"""
+def load_cache_commits():
+    """Load cached COMMIT_CODE events from all cache files"""
     cache_dir = Path("cache")
 
-    repo_stars = {}
     repo_commits = {}
     total_interactions = 0
     files_processed = 0
@@ -196,7 +195,7 @@ def load_cache_stars_and_commits():
 
     if not cache_files:
         print(f"Warning: No cache files found in {cache_dir}. Run generate_trust.py first to create cache.")
-        return repo_stars, repo_commits
+        return repo_commits
 
     print(f"Found {len(cache_files)} cache files to process")
 
@@ -207,15 +206,8 @@ def load_cache_stars_and_commits():
             files_processed += 1
             print(f"✓ Processing {cache_file.name} with {len(df)} interactions")
 
-            # Filter for STARRED and COMMIT_CODE events
-            starred_df = df[df['event_type'] == 'STARRED']
+            # Filter for COMMIT_CODE events only
             commits_df = df[df['event_type'] == 'COMMIT_CODE']
-
-            # Aggregate stars by repository
-            if not starred_df.empty:
-                repo_star_counts = starred_df.groupby('repo')['event_count'].sum()
-                for repo, count in repo_star_counts.items():
-                    repo_stars[repo] = repo_stars.get(repo, 0) + count
 
             # Aggregate commits by repository
             if not commits_df.empty:
@@ -227,41 +219,16 @@ def load_cache_stars_and_commits():
             print(f"Warning: Error loading {cache_file}: {e}")
 
     print(f"✓ Processed {files_processed} cache files with {total_interactions} total interactions")
-    print(f"✓ Loaded {len(repo_stars)} repositories with star data from cache")
     print(f"✓ Loaded {len(repo_commits)} repositories with commit data from cache")
 
 
 
-    return repo_stars, repo_commits
-
-def ensure_commit_events_loaded(cached_commits):
-    """Ensure commit events are loaded from cache, load if not already done"""
-    if cached_commits:
-        print("✓ Commit events already loaded from cache")
-        return cached_commits
-
-    print("→ Loading commit events from all cache files...")
-    cache_dir = Path("cache")
-    cache_files = list(cache_dir.glob("interactions_*.csv"))
-
-    repo_commits = {}
-    for cache_file in cache_files:
-        try:
-            df = pd.read_csv(cache_file)
-            commits_df = df[df['event_type'] == 'COMMIT_CODE']
-
-            if not commits_df.empty:
-                repo_commit_counts = commits_df.groupby('repo')['event_count'].sum()
-                for repo, count in repo_commit_counts.items():
-                    repo_commits[repo] = repo_commits.get(repo, 0) + count
-        except Exception as e:
-            print(f"Warning: Error loading commit events from {cache_file}: {e}")
-
-    print(f"✓ Loaded {len(repo_commits)} repositories with commit data from all cache files")
     return repo_commits
 
-def get_repo_stars_batch(repo_list, client, cached_stars, cached_commits):
-    """Get star counts for a batch of repositories using OSO (repo_list contains only uncached repos)"""
+
+
+def get_repo_commits_batch(repo_list, client, cached_commits):
+    """Get commit counts for a batch of repositories using OSO (repo_list contains only uncached repos)"""
     if not repo_list:
         return []
 
@@ -285,7 +252,7 @@ def get_repo_stars_batch(repo_list, client, cached_stars, cached_commits):
     LEFT JOIN int_events_daily__github e ON p.artifact_id = e.to_artifact_id
     WHERE p.artifact_source = 'GITHUB'
       AND ({condition_str})
-      AND (e.bucket_day IS NULL OR e.bucket_day >= CURRENT_DATE - INTERVAL '365' DAY)
+      AND (e.bucket_day IS NULL OR e.bucket_day >= CURRENT_DATE - INTERVAL '180' DAY)
     GROUP BY p.artifact_namespace, p.artifact_name
     """
 
@@ -309,24 +276,18 @@ def get_repo_stars_batch(repo_list, client, cached_stars, cached_commits):
             full_name = repo_info['full_name']
             if full_name in repo_data:
                 data = repo_data[full_name]
-                # Get stars from cache if available
-                cached_star_count = cached_stars.get(full_name, 0)
                 results.append({
                     'repo_org': data['artifact_namespace'],
                     'repo_name': data['artifact_name'],
-                    'stars': cached_star_count,
                     'commits': data['commits'],
                     'status': 'found'
                 })
             else:
-                # Check if we have stars in cache even if no commits
-                cached_star_count = cached_stars.get(full_name, 0)
                 results.append({
                     'repo_org': repo_info['owner'],
                     'repo_name': repo_info['repo'],
-                    'stars': cached_star_count,
                     'commits': 0,
-                    'status': 'found' if cached_star_count > 0 else 'not_found'
+                    'status': 'not_found'
                 })
 
         return results
@@ -337,21 +298,17 @@ def get_repo_stars_batch(repo_list, client, cached_stars, cached_commits):
         return [{
             'repo_org': repo_info['owner'],
             'repo_name': repo_info['repo'],
-            'stars': 0,
             'commits': 0,
             'status': 'error'
         } for repo_info in repo_list]
 
-def fetch_all_stars_oso(repos):
-    """Fetch star counts for all repositories using cache first, then OSO for missing data"""
+def fetch_all_commits_oso(repos):
+    """Fetch commit counts for all repositories using cache first, then OSO for missing data"""
     # Load cache first
-    print("Loading cache for STARRED and COMMIT_CODE events from all cache files...")
-    cached_stars, cached_commits = load_cache_stars_and_commits()
+    print("Loading cache for COMMIT_CODE events from all cache files...")
+    cached_commits = load_cache_commits()
 
-    # Ensure commit events are loaded
-    cached_commits = ensure_commit_events_loaded(cached_commits)
-
-    # Filter out repos already fully cached
+    # Filter out repos already cached for commits
     uncached_repos = []
     cached_results = []
 
@@ -359,9 +316,8 @@ def fetch_all_stars_oso(repos):
 
     for repo in repos:
         full_name = repo['full_name']
-        if full_name in cached_stars or full_name in cached_commits:
+        if full_name in cached_commits:
             # Found in cache
-            stars = cached_stars.get(full_name, 0)
             commits = cached_commits.get(full_name, 0)
 
             org_name = full_name.split('/')
@@ -369,11 +325,10 @@ def fetch_all_stars_oso(repos):
                 cached_results.append({
                     'repo_org': org_name[0],
                     'repo_name': org_name[1],
-                    'stars': stars,
                     'commits': commits,
                     'status': 'found'
                 })
-                print(f"  ✓ Found in cache: {full_name} ({stars} stars, {commits} commits)")
+                print(f"  ✓ Found in cache: {full_name} ({commits} commits)")
             else:
                 uncached_repos.append(repo)
         else:
@@ -435,7 +390,7 @@ def fetch_all_stars_oso(repos):
         print(f"Processing batch {batch_num}/{total_batches} ({len(repo_batch)} repos) - {progress_pct:.1f}% complete, {queue_size} in queue")
 
         try:
-            batch_results = get_repo_stars_batch(repo_batch, client, cached_stars, cached_commits)
+            batch_results = get_repo_commits_batch(repo_batch, client, cached_commits)
 
             # Success statistics
             found_count = sum(1 for r in batch_results if r['status'] == 'found')
@@ -471,27 +426,26 @@ def fetch_all_stars_oso(repos):
     return results
 
 def display_top_repos(results, top_n=100):
-    """Display top N repositories by star count"""
-    # Filter out errors and not found repos, then sort by stars
-    valid_results = [r for r in results if r['status'] == 'found' and r['stars'] >= 0]
-    sorted_results = sorted(valid_results, key=lambda x: x['stars'], reverse=True)
+    """Display top N repositories by commit count"""
+    # Filter out errors and not found repos, then sort by commits
+    valid_results = [r for r in results if r['status'] == 'found' and r['commits'] >= 0]
+    sorted_results = sorted(valid_results, key=lambda x: x['commits'], reverse=True)
 
-    print(f"\n{'='*100}")
-    print(f"TOP {min(top_n, len(sorted_results))} SOLANA REPOSITORIES BY GITHUB STARS")
-    print(f"{'='*100}")
-    print(f"{'Rank':<6} {'Stars':<8} {'Commits':<10} {'Repository':<35}")
-    print(f"{'-'*100}")
+    print(f"\n{'='*80}")
+    print(f"TOP {min(top_n, len(sorted_results))} SOLANA REPOSITORIES BY COMMIT COUNT")
+    print(f"{'='*80}")
+    print(f"{'Rank':<6} {'Commits':<10} {'Repository':<35}")
+    print(f"{'-'*80}")
 
     for i, repo in enumerate(sorted_results[:top_n], 1):
-        stars_str = f"{repo['stars']:,}"
         commits_str = f"{repo['commits']:,}"
         repo_name = f"{repo['repo_org']}/{repo['repo_name']}"
-        print(f"{i:<6} {stars_str:<8} {commits_str:<10} {repo_name:<35}")
+        print(f"{i:<6} {commits_str:<10} {repo_name:<35}")
 
     # Summary statistics
-    print(f"\n{'='*100}")
+    print(f"\n{'='*80}")
     print("SUMMARY STATISTICS")
-    print(f"{'='*100}")
+    print(f"{'='*80}")
 
     total_repos = len(results)
     found_repos = len([r for r in results if r['status'] == 'found'])
@@ -504,20 +458,16 @@ def display_top_repos(results, top_n=100):
     print(f"Errors: {errors:,} ({errors/total_repos*100:.1f}%)")
 
     if valid_results:
-        total_stars = sum(r['stars'] for r in valid_results)
         total_commits = sum(r['commits'] for r in valid_results)
-        avg_stars = total_stars / len(valid_results)
         avg_commits = total_commits / len(valid_results)
-        max_stars = max(r['stars'] for r in valid_results)
-        median_stars = sorted([r['stars'] for r in valid_results])[len(valid_results)//2]
+        max_commits = max(r['commits'] for r in valid_results)
+        median_commits = sorted([r['commits'] for r in valid_results])[len(valid_results)//2]
 
         print(f"\nRepository statistics (found repositories only):")
-        print(f"Total stars: {total_stars:,}")
         print(f"Total commits: {total_commits:,}")
-        print(f"Average stars: {avg_stars:.1f}")
         print(f"Average commits: {avg_commits:.1f}")
-        print(f"Median stars: {median_stars:,}")
-        print(f"Maximum stars: {max_stars:,}")
+        print(f"Median commits: {median_commits:,}")
+        print(f"Maximum commits: {max_commits:,}")
 
 def save_results(results):
     """Save results to CSV file in raw/ directory"""
@@ -525,25 +475,24 @@ def save_results(results):
     raw_dir.mkdir(exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = raw_dir / f"solana_github_stars_oso_{timestamp}.csv"
+    output_file = raw_dir / f"solana_github_commits_oso_{timestamp}.csv"
 
     # Filter to only successful results and select only required columns
     successful_results = [r for r in results if r['status'] == 'found']
     simplified_results = [{
         'repo_org': r['repo_org'],
         'repo_name': r['repo_name'],
-        'stars': r['stars'],
         'commits': r['commits']
     } for r in successful_results]
 
     if simplified_results:
         df = pd.DataFrame(simplified_results)
-        df = df.sort_values('stars', ascending=False)
+        df = df.sort_values('commits', ascending=False)
         df.to_csv(output_file, index=False)
         print(f"\nResults saved to: {output_file}")
     else:
         # Create empty CSV with headers
-        df = pd.DataFrame(columns=['repo_org', 'repo_name', 'stars', 'commits'])
+        df = pd.DataFrame(columns=['repo_org', 'repo_name', 'commits'])
         df.to_csv(output_file, index=False)
         print(f"\nEmpty results saved to: {output_file}")
 
@@ -551,7 +500,7 @@ def save_results(results):
 
 def main():
     """Main function"""
-    parser = argparse.ArgumentParser(description='GitHub Stars Ranking for Solana Repositories using OSO')
+    parser = argparse.ArgumentParser(description='Repository Commit Finder for Solana Repositories using OSO')
     parser.add_argument('--test', action='store_true', help='Run filtering tests only')
     parser.add_argument('--top', type=int, default=100, help='Number of top repositories to display (default: 100)')
     parser.add_argument('--limit', type=int, help='Limit number of repositories to process (for testing)')
@@ -562,7 +511,7 @@ def main():
         test_filtering()
         return
 
-    print("GitHub Stars Ranking for Solana Repositories using OSO")
+    print("Repository Commit Finder for Solana Repositories using OSO")
     print("=" * 60)
 
     # Load repositories
@@ -572,8 +521,8 @@ def main():
         print("No repositories found after filtering. Exiting.")
         return
 
-    # Fetch star counts using OSO
-    results = fetch_all_stars_oso(repos)
+    # Fetch commit counts using OSO
+    results = fetch_all_commits_oso(repos)
 
     # Display top repositories
     display_top_repos(results, top_n=args.top)
