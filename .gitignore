@@ -1,3 +1,5 @@
+venv/
+
 raw/**
 filtered/**
 scores/**
@@ -6,6 +8,7 @@ tmp/**
 cache/**
 output/**
 ecosystems/**
+ui/**
 
 __pycache__
 
