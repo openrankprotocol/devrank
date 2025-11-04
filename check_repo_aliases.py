@@ -12,6 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from collections import defaultdict
 
+
 def check_repo_by_artifact_source_id(artifact_source_id, client):
     """
     Check if a repository exists in different OSO tables by artifact_source_id.
@@ -22,7 +23,7 @@ def check_repo_by_artifact_source_id(artifact_source_id, client):
     tables = [
         ("artifacts_by_project_v1", "artifact_source"),
         ("artifacts_v1", "artifact_source"),
-        ("int_artifacts__github", None)
+        ("int_artifacts__github", None),
     ]
 
     for table_name, extra_field in tables:
@@ -43,7 +44,7 @@ def check_repo_by_artifact_source_id(artifact_source_id, client):
                 results[table_name] = []
                 for _, row in df.iterrows():
                     org_repo = f"{row['artifact_namespace']}/{row['artifact_name']}"
-                    results[table_name].append((row['artifact_id'], org_repo))
+                    results[table_name].append((row["artifact_id"], org_repo))
         except Exception:
             pass
 
@@ -55,22 +56,24 @@ def check_repo_in_tables(repo_name, client, artifact_tracking):
     Check if a repository exists in different OSO tables.
     Returns list of artifact_source_ids found.
     """
-    if '/' not in repo_name:
+    if "/" not in repo_name:
         return []
 
-    org, repo = repo_name.split('/', 1)
+    org, repo = repo_name.split("/", 1)
     found_artifact_source_ids = []
 
     tables = [
         ("artifacts_by_project_v1", "GITHUB"),
         ("artifacts_v1", "GITHUB"),
-        ("int_artifacts__github", None)
+        ("int_artifacts__github", None),
     ]
 
     tables_found = []
 
     for table_name, source_filter in tables:
-        source_condition = f"AND artifact_source = '{source_filter}'" if source_filter else ""
+        source_condition = (
+            f"AND artifact_source = '{source_filter}'" if source_filter else ""
+        )
         query = f"""
         SELECT artifact_source_id
         FROM {table_name}
@@ -84,8 +87,8 @@ def check_repo_in_tables(repo_name, client, artifact_tracking):
         if not df.empty:
             tables_found.append(table_name)
             for _, row in df.iterrows():
-                if row['artifact_source_id'] not in found_artifact_source_ids:
-                    found_artifact_source_ids.append(row['artifact_source_id'])
+                if row["artifact_source_id"] not in found_artifact_source_ids:
+                    found_artifact_source_ids.append(row["artifact_source_id"])
 
     # Track results for each artifact_source_id found
     for artifact_source_id in found_artifact_source_ids:
@@ -109,8 +112,15 @@ def main():
     """Main function to check repositories in OSO tables."""
 
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Check if repositories exist in OSO database tables')
-    parser.add_argument('config', nargs='?', default='config.toml', help='Path to config.toml file (default: config.toml)')
+    parser = argparse.ArgumentParser(
+        description="Check if repositories exist in OSO database tables"
+    )
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default="config.toml",
+        help="Path to config.toml file (default: config.toml)",
+    )
     args = parser.parse_args()
 
     # Load environment variables from .env file
@@ -135,11 +145,13 @@ def main():
     seed_repos = config.get("general", {}).get("seed_repos", [])
     if not seed_repos:
         print("❌ ERROR: No seed repositories found in configuration!")
-        print("Please ensure your config.toml has seed_repos defined in [general] section.")
+        print(
+            "Please ensure your config.toml has seed_repos defined in [general] section."
+        )
         sys.exit(1)
 
     # Get API key
-    api_key = os.getenv('OSO_API_KEY')
+    api_key = os.getenv("OSO_API_KEY")
     if not api_key:
         print("❌ ERROR: OSO API key required. Set OSO_API_KEY environment variable.")
         sys.exit(1)
@@ -147,6 +159,7 @@ def main():
     # Initialize OSO client
     try:
         from pyoso import Client
+
         client = Client(api_key=api_key)
         print("✅ OSO client initialized successfully")
     except ImportError:
@@ -169,6 +182,7 @@ def main():
     # Process repos in queue with retry logic
     while repo_queue:
         import time
+
         time.sleep(0.1)  # Add small delay to avoid rate limiting
 
         # Take one repo from queue
@@ -213,7 +227,9 @@ def main():
             for table_name, artifacts in table_results.items():
                 if artifacts:
                     artifact_ids = [str(aid) for aid, _ in artifacts]
-                    print(f"   {table_name}: {len(artifacts)} artifacts (IDs: {', '.join(artifact_ids)})")
+                    print(
+                        f"   {table_name}: {len(artifacts)} artifacts (IDs: {', '.join(artifact_ids)})"
+                    )
 
     if not duplicates_found:
         print("   None found - all artifact_source_ids have single artifacts.")

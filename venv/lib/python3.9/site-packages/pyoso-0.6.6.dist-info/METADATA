@@ -1,0 +1,161 @@
+Metadata-Version: 2.4
+Name: pyoso
+Version: 0.6.6
+Author-email: Icaro Guerra <icaro@karibalabs.co>
+Requires-Python: >=3.8
+Requires-Dist: pandas>=1.2.0
+Requires-Dist: pydantic>=2.10.5
+Requires-Dist: requests>=2.32.4
+Requires-Dist: sqlglot>=26.6.0
+Provides-Extra: semantic
+Requires-Dist: oso-semantic; extra == 'semantic'
+Description-Content-Type: text/markdown
+
+# pyoso
+
+_WARNING: THIS IS A WORK IN PROGRESS_
+
+`pyoso` is a Python package for fetching models and metrics from OSO. This package provides an easy-to-use interface to interact with oso and retrieve valuable data for analysis and monitoring.
+
+## Features
+
+- Execute custom SQL queries for analyzing the OSO dataset.
+- Inspect data dependencies and freshness with an analytics tree.
+- Semantic modeling layer to build and execute complex queries (optional).
+
+## Installation
+
+You can install `pyoso` using pip:
+
+```bash
+pip install pyoso
+```
+
+### Optional Semantic Modeling
+
+For semantic modeling capabilities, you can install with the semantic extra:
+
+```bash
+pip install pyoso[semantic]
+```
+
+This will include the `oso_semantic` package for building semantic models and queries.
+
+## Usage
+
+Here is a basic example of how to use `pyoso` to fetch data directly into a pandas DataFrame:
+
+```python
+import os
+from pyoso import Client
+
+# Initialize the client with an API key
+os.environ["OSO_API_KEY"] = 'your_api_key'
+client = Client()
+
+# Fetch artifacts
+query = "SELECT * FROM artifacts_v1 LIMIT 5"
+artifacts = client.to_pandas(query)
+
+print(artifacts)
+```
+
+### Inspecting Data Dependencies
+
+For more advanced use cases, the `client.query()` method returns a `QueryResponse` object that contains both the data and analytics metadata. This allows you to inspect the dependency tree of the data sources used in your query.
+
+```python
+import os
+from pyoso import Client
+
+# Initialize the client
+os.environ["OSO_API_KEY"] = "your_api_key"
+client = Client()
+
+# Execute a query to get a QueryResponse object
+query = "SELECT * FROM artifacts_v1 LIMIT 5"
+response = client.query(query)
+
+# You can still get the DataFrame as before
+df = response.to_pandas()
+print("\n--- Query Data ---")
+print(df)
+
+# Now, inspect the analytics to see the dependency tree
+print("\n--- Data Dependency Tree ---")
+response.analytics.print_tree()
+```
+
+This will output a tree structure showing how the final `artifacts_v1` table was constructed from its upstream dependencies, helping you understand the data's origin and freshness.
+
+## Using in notebooks
+
+pyoso also has special support for notebooks. Specifically, we provide a helper function to create a database connection to the OSO dataset that can be used with `marimo`. To use this, we suggest you make a cell at the start of your notebook with the following code:
+
+```python
+from pyoso.notebook import marimo_db
+pyoso_db_conn = marimo_db()
+```
+
+## Documentation
+
+For detailed documentation about the OSO dataset, please refer to the [official documentation](https://docs.opensource.observer/docs/integrate/datasets/).
+
+## Future Plans
+
+- Create DataFrame wrapper for creating SQL query from data transforms
+
+## Manually testing with pyodide
+
+We need to add pyodide to CI, but for now to manually run tests do the following:
+
+### Get current pyodide version
+
+You will need to do this from the pyoso directory.
+
+```bash
+PYODIDE_EMSCRIPTEN_VERSION=$(pyodide config get emscripten_version)
+```
+
+### Install emscripten
+
+Choose a place to store the code and git clone `emsdk`:
+
+```bash
+cd some/base/directory
+git clone https://github.com/emscripten-core/emsdk
+cd emsdk
+
+./emsdk install ${PYODIDE_EMSCRIPTEN_VERSION}
+./emsdk activate ${PYODIDE_EMSCRIPTEN_VERSION}
+source emsdk_env.sh
+```
+
+### Build pyodide wheel
+
+Now go back to the `pyoso` directory
+
+```bash
+cd oso/warehouse/pyoso
+uv run pyodide build
+```
+
+This will generate a `.whl` file in `dist`
+
+### Download pyodide version
+
+Download the recent pyodide version (at the time of writing is 0.27.2):
+
+```bash
+cd dist/
+wget https://github.com/pyodide/pyodide/releases/download/0.27.2/pyodide-0.27.2.tar.bz2
+tar xjf pyodide-0.27.2.tar.bz2
+```
+
+This will now have generated a `dist/pyodide` directory.
+
+### Run pytest
+
+```bash
+uv run pytest --run-in-pyodide . --runtime node --dist-dir=./dist
+```

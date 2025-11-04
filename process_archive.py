@@ -31,15 +31,15 @@ def extract_repo_from_url(repo_url):
 
     try:
         # Handle different URL formats
-        if repo_url.startswith('https://github.com/'):
-            path = repo_url.replace('https://github.com/', '')
-        elif repo_url.startswith('https://api.github.com/repos/'):
-            path = repo_url.replace('https://api.github.com/repos/', '')
+        if repo_url.startswith("https://github.com/"):
+            path = repo_url.replace("https://github.com/", "")
+        elif repo_url.startswith("https://api.github.com/repos/"):
+            path = repo_url.replace("https://api.github.com/repos/", "")
         else:
             return None
 
         # Remove trailing slashes and extra path components
-        parts = path.rstrip('/').split('/')
+        parts = path.rstrip("/").split("/")
         if len(parts) >= 2:
             return f"{parts[0]}/{parts[1]}"
     except:
@@ -51,19 +51,19 @@ def extract_repo_from_url(repo_url):
 def process_event(event, interactions):
     """Process a single GitHub event and extract user-repo interactions"""
     try:
-        event_type = event.get('type', '')
-        actor = event.get('actor', {})
-        repo = event.get('repo', {})
+        event_type = event.get("type", "")
+        actor = event.get("actor", {})
+        repo = event.get("repo", {})
 
         # Extract user info
-        user_login = actor.get('login')
+        user_login = actor.get("login")
         if not user_login:
             return
 
         # Extract repo info
-        repo_name = repo.get('name')
+        repo_name = repo.get("name")
         if not repo_name:
-            repo_url = repo.get('url')
+            repo_url = repo.get("url")
             if repo_url:
                 repo_name = extract_repo_from_url(repo_url)
 
@@ -72,46 +72,46 @@ def process_event(event, interactions):
 
         # Map GitHub event types to our interaction types
         event_mapping = {
-            'PushEvent': 'COMMIT_CODE',
-            'PullRequestEvent': 'PULL_REQUEST_OPENED',  # Will refine based on action
-            'IssuesEvent': 'ISSUE_OPENED',  # Will refine based on action
-            'WatchEvent': 'STARRED',
-            'ForkEvent': 'FORKED',
-            'CreateEvent': 'CREATED',
-            'ReleaseEvent': 'RELEASE_PUBLISHED',
-            'PullRequestReviewEvent': 'PULL_REQUEST_REVIEWED',
-            'IssueCommentEvent': 'ISSUE_COMMENTED',
-            'PullRequestReviewCommentEvent': 'PULL_REQUEST_COMMENTED'
+            "PushEvent": "COMMIT_CODE",
+            "PullRequestEvent": "PULL_REQUEST_OPENED",  # Will refine based on action
+            "IssuesEvent": "ISSUE_OPENED",  # Will refine based on action
+            "WatchEvent": "STARRED",
+            "ForkEvent": "FORKED",
+            "CreateEvent": "CREATED",
+            "ReleaseEvent": "RELEASE_PUBLISHED",
+            "PullRequestReviewEvent": "PULL_REQUEST_REVIEWED",
+            "IssueCommentEvent": "ISSUE_COMMENTED",
+            "PullRequestReviewCommentEvent": "PULL_REQUEST_COMMENTED",
         }
 
         mapped_event = event_mapping.get(event_type)
 
         # Handle special cases with payload inspection
-        if event_type == 'PullRequestEvent':
-            payload = event.get('payload', {})
-            action = payload.get('action')
-            if action == 'closed' and payload.get('pull_request', {}).get('merged'):
-                mapped_event = 'PULL_REQUEST_MERGED'
-            elif action == 'opened':
-                mapped_event = 'PULL_REQUEST_OPENED'
-            elif action == 'closed':
-                mapped_event = 'PULL_REQUEST_CLOSED'
-        elif event_type == 'IssuesEvent':
-            payload = event.get('payload', {})
-            action = payload.get('action')
-            if action == 'opened':
-                mapped_event = 'ISSUE_OPENED'
-            elif action == 'closed':
-                mapped_event = 'ISSUE_CLOSED'
+        if event_type == "PullRequestEvent":
+            payload = event.get("payload", {})
+            action = payload.get("action")
+            if action == "closed" and payload.get("pull_request", {}).get("merged"):
+                mapped_event = "PULL_REQUEST_MERGED"
+            elif action == "opened":
+                mapped_event = "PULL_REQUEST_OPENED"
+            elif action == "closed":
+                mapped_event = "PULL_REQUEST_CLOSED"
+        elif event_type == "IssuesEvent":
+            payload = event.get("payload", {})
+            action = payload.get("action")
+            if action == "opened":
+                mapped_event = "ISSUE_OPENED"
+            elif action == "closed":
+                mapped_event = "ISSUE_CLOSED"
 
         if not mapped_event:
             return
 
         # Calculate event count (for PushEvent, use commit count)
         event_count = 1
-        if event_type == 'PushEvent':
-            payload = event.get('payload', {})
-            commits = payload.get('commits', [])
+        if event_type == "PushEvent":
+            payload = event.get("payload", {})
+            commits = payload.get("commits", [])
             event_count = len(commits) if commits else 1
 
         # Add to interactions
@@ -128,7 +128,7 @@ def process_archive_file(file_path, interactions):
     events_processed = 0
 
     try:
-        with gzip.open(file_path, 'rt', encoding='utf-8') as f:
+        with gzip.open(file_path, "rt", encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
                 try:
                     event = json.loads(line.strip())
@@ -155,7 +155,7 @@ def get_month_year_from_files(archive_files):
         filename = file_path.name
         # Extract date from filename like "2015-01-01-0.json.gz"
         try:
-            date_part = filename.split('-')
+            date_part = filename.split("-")
             if len(date_part) >= 4:  # year-month-day-hour.json.gz
                 year = date_part[0]
                 month = date_part[1]
@@ -180,14 +180,23 @@ def get_month_year_from_files(archive_files):
 
     missing_days = expected_days - days_found
     if missing_days:
-        raise ValueError(f"Missing days in month {month}/{year}: {sorted(missing_days)}")
+        raise ValueError(
+            f"Missing days in month {month}/{year}: {sorted(missing_days)}"
+        )
 
     return month, year
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Process GitHub Archive files and extract interactions')
-    parser.add_argument('--archive-dir', type=str, default='archive', help='Archive directory (default: archive)')
+    parser = argparse.ArgumentParser(
+        description="Process GitHub Archive files and extract interactions"
+    )
+    parser.add_argument(
+        "--archive-dir",
+        type=str,
+        default="archive",
+        help="Archive directory (default: archive)",
+    )
 
     args = parser.parse_args()
 
@@ -226,10 +235,12 @@ def main():
         for file_path in pbar:
             events_processed = process_archive_file(file_path, interactions)
             total_events += events_processed
-            pbar.set_postfix({
-                'events': f"{total_events:,}",
-                'interactions': f"{len(interactions):,}"
-            })
+            pbar.set_postfix(
+                {
+                    "events": f"{total_events:,}",
+                    "interactions": f"{len(interactions):,}",
+                }
+            )
 
     print(f"✓ Processed {total_events:,} events")
     print(f"✓ Found {len(interactions):,} unique interactions")
@@ -241,12 +252,14 @@ def main():
     # Convert interactions to DataFrame
     rows = []
     for (user, repo, event_type), event_count in interactions.items():
-        rows.append({
-            'user': user,
-            'repo': repo,
-            'event_type': event_type,
-            'event_count': event_count
-        })
+        rows.append(
+            {
+                "user": user,
+                "repo": repo,
+                "event_type": event_type,
+                "event_count": event_count,
+            }
+        )
 
     df = pd.DataFrame(rows)
 
@@ -263,9 +276,11 @@ def main():
     # Show top interactions
     print(f"\nTop 10 interactions:")
     print("=" * 80)
-    top_interactions = df.nlargest(10, 'event_count')
+    top_interactions = df.nlargest(10, "event_count")
     for _, row in top_interactions.iterrows():
-        print(f"{row['user']:<20} {row['repo']:<30} {row['event_type']:<20} {row['event_count']:>6}")
+        print(
+            f"{row['user']:<20} {row['repo']:<30} {row['event_type']:<20} {row['event_count']:>6}"
+        )
 
     return 0
 
