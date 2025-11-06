@@ -46,6 +46,7 @@ repo_exclude_keywords = [
 bot_keywords = [
     "bot",
     "dependabot",
+    "copilot",
     "mergify",
     "renovate",
     "github-actions",
@@ -55,6 +56,7 @@ bot_keywords = [
     "greenkeeper",
     "pyup",
     "automated",
+    "automation",
     "auto-merge",
     "stale",
     "allcontributors",
@@ -67,5 +69,7 @@ bot_keywords = [
     "depfu",
     "travis",
     "circleci",
-    "jenkins"
+    "jenkins",
+    "uniswap-collab",
+    "uniswap-team",
 ]
