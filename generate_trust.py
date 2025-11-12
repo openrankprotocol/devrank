@@ -9,51 +9,70 @@ This script:
 4. Appends results directly to trust/github.csv without aggregation
 5. Processes files incrementally to minimize memory usage
 
+Usage:
+    python generate_trust.py                                          # Use all ecosystem files
+    python generate_trust.py ecosystems/eigenlayer.csv                # Use single file
+    python generate_trust.py ecosystems/eigenlayer.csv ecosystems/ritual.csv  # Use multiple files
+    python generate_trust.py ecosystems/*.csv                         # Use glob pattern
+
 Memory-efficient approach: processes one file at a time and appends to output.
 """
 
-import pandas as pd
-from pathlib import Path
-import toml
-from typing import Dict, Set
 import os
+import sys
+from pathlib import Path
+from typing import Dict, List, Set
+
+import pandas as pd
+import toml
 
 
-def load_target_repos(ecosystems_dir: Path = Path("ecosystems")) -> Set[str]:
+def load_target_repos(ecosystem_files: List[Path] = None) -> Set[str]:
     """
     Load all target repositories from ecosystem CSV files.
 
-    Extracts repo names (owner/repo) from GitHub URLs in all CSV files
-    in the ecosystems/ directory and returns them as a set.
+    Extracts repo names (owner/repo) from GitHub URLs from specified CSV files
+    or all files in the ecosystems/ directory if none specified.
 
     Args:
-        ecosystems_dir: Path to the ecosystems directory
+        ecosystem_files: List of ecosystem file paths. If None, loads all from ecosystems/
 
     Returns:
         Set of repository names in format "owner/repo"
     """
     target_repos = set()
 
-    if not ecosystems_dir.exists():
-        print(
-            f"Warning: {ecosystems_dir} not found, no ecosystem filtering will be applied"
-        )
-        return target_repos
+    # If no files specified, use all files from ecosystems/ directory
+    if ecosystem_files is None or len(ecosystem_files) == 0:
+        ecosystems_dir = Path("ecosystems")
+        if not ecosystems_dir.exists():
+            print(
+                f"Warning: {ecosystems_dir} not found, no ecosystem filtering will be applied"
+            )
+            return target_repos
 
-    csv_files = list(ecosystems_dir.glob("*.csv"))
+        csv_files = list(ecosystems_dir.glob("*.csv"))
 
-    if not csv_files:
-        print(f"Warning: No CSV files found in {ecosystems_dir}")
-        return target_repos
+        if not csv_files:
+            print(f"Warning: No CSV files found in {ecosystems_dir}")
+            return target_repos
+    else:
+        csv_files = ecosystem_files
 
     print(f"Loading target repos from {len(csv_files)} ecosystem file(s)...")
 
     for csv_file in csv_files:
+        csv_file = Path(csv_file)
+
+        if not csv_file.exists():
+            print(f"  ✗ File not found: {csv_file}")
+            continue
+
         try:
             df = pd.read_csv(csv_file)
 
             if "url" not in df.columns:
-                print(f"Warning: 'url' column not found in {csv_file.name}, skipping")
+                print(f"  ✗ 'url' column not found in {csv_file.name}, skipping")
                 continue
 
             # Extract repo names from GitHub URLs
@@ -258,8 +277,19 @@ def main():
     print("=" * 60)
     print()
 
+    # Parse command-line arguments for ecosystem files
+    ecosystem_files = None
+    if len(sys.argv) > 1:
+        ecosystem_files = [Path(arg) for arg in sys.argv[1:]]
+        print(f"Using {len(ecosystem_files)} specified ecosystem file(s):")
+        for f in ecosystem_files:
+            print(f"  - {f}")
+    else:
+        print("No ecosystem files specified, using all files from ecosystems/")
+    print()
+
     # Load target repositories from ecosystems
-    target_repos = load_target_repos()
+    target_repos = load_target_repos(ecosystem_files)
 
     # Load configuration
     config = load_config()
