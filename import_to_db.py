@@ -13,9 +13,9 @@ Tables populated:
 Note: For interactions import, use import_interactions.py
 
 Usage:
-    python import_to_db.py --all                    # Import ecosystems and all runs
-    python import_to_db.py --ecosystems             # Import ecosystems only
-    python import_to_db.py --run <community_id>     # Create a new run and import scores/seeds
+    python import_to_db.py --all              # Import ecosystems and all runs
+    python import_to_db.py --ecosystems       # Import ecosystems only
+    python import_to_db.py --run <community>  # Create a new run and import scores/seeds
 
 Requirements:
     - psycopg2 (install with: pip install psycopg2-binary)
@@ -24,8 +24,10 @@ Requirements:
 """
 
 import argparse
+import calendar
 import csv
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -177,6 +179,41 @@ def import_ecosystems(conn, ecosystems_dir):
 
     conn.commit()
     print(f"  ✅ Total ecosystems imported: {total_rows}")
+
+
+def calculate_days_back(cache_dir):
+    """
+    Calculate the total number of days covered by interaction files in cache.
+
+    Args:
+        cache_dir: Path to cache directory containing interaction files
+
+    Returns:
+        int: Total number of days across all months in cache
+    """
+    cache_path = Path(cache_dir)
+    csv_files = list(cache_path.glob("interactions_*.csv"))
+
+    if not csv_files:
+        return 365  # Default fallback
+
+    months = set()
+    for csv_file in csv_files:
+        match = re.match(r"interactions_(\d{2})_(\d{4})\.csv", csv_file.name)
+        if match:
+            month = int(match.group(1))
+            year = int(match.group(2))
+            months.add((year, month))
+
+    if not months:
+        return 365  # Default fallback
+
+    total_days = 0
+    for year, month in months:
+        days_in_month = calendar.monthrange(year, month)[1]
+        total_days += days_in_month
+
+    return total_days
 
 
 def get_next_run_id(conn, community_id):
@@ -402,9 +439,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python import_to_db.py --all --days-back 365
+  python import_to_db.py --all
   python import_to_db.py --ecosystems
-  python import_to_db.py --run bitcoin --days-back 180
+  python import_to_db.py --run bitcoin
 
 Environment variables:
   DATABASE_URL Full connection string (required)
@@ -431,14 +468,12 @@ Environment variables:
         help="Create a new run for the specified community and import its scores/seeds",
     )
 
-    parser.add_argument(
-        "--days-back",
-        type=int,
-        default=365,
-        help="Number of days back for the run (default: 365)",
-    )
-
     args = parser.parse_args()
+
+    # Calculate days_back from cache files
+    base_dir = Path(__file__).parent
+    days_back = calculate_days_back(base_dir / "cache")
+    print(f"📅 Calculated days_back from cache: {days_back} days")
 
     # Default to --all if no options specified
     if not any([args.all, args.ecosystems, args.run]):
@@ -467,13 +502,13 @@ Environment variables:
             # Import everything
             import_ecosystems(conn, base_dir / "ecosystems")
             print()
-            import_all_runs(conn, args.days_back, config)
+            import_all_runs(conn, days_back, config)
         else:
             if args.ecosystems:
                 import_ecosystems(conn, base_dir / "ecosystems")
 
             if args.run:
-                import_run(conn, args.run, args.days_back, config)
+                import_run(conn, args.run, days_back, config)
 
         print("\n✅ Import complete!")
 
