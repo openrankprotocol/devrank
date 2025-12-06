@@ -7,14 +7,14 @@ This script imports data from CSV files into PostgreSQL database tables.
 Tables populated:
 - devrank.runs: Execution run metadata
 - devrank.ecosystems: Repository URLs and sub-ecosystems
-- devrank.interactions: User-repo interaction data from cache
 - devrank.scores: Score results for each run
 - devrank.seeds: Seed data for each run
 
+Note: For interactions import, use import_interactions.py
+
 Usage:
-    python import_to_db.py --all                    # Import all data
+    python import_to_db.py --all                    # Import ecosystems and all runs
     python import_to_db.py --ecosystems             # Import ecosystems only
-    python import_to_db.py --interactions           # Import interactions only
     python import_to_db.py --run <community_id>     # Create a new run and import scores/seeds
 
 Requirements:
@@ -25,9 +25,7 @@ Requirements:
 
 import argparse
 import csv
-import io
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -83,7 +81,7 @@ def create_tables(conn):
         "interactions.sql",
         "runs.sql",
         "scores.sql",
-        "seed.sql",
+        "seeds.sql",
     ]
 
     for schema_file in schema_files:
@@ -181,90 +179,33 @@ def import_ecosystems(conn, ecosystems_dir):
     print(f"  ✅ Total ecosystems imported: {total_rows}")
 
 
-def import_interactions(conn, cache_dir):
+def get_next_run_id(conn, community_id):
     """
-    Import interaction CSV files into devrank.interactions table.
-    Uses TRUNCATE and COPY for fast bulk loading.
+    Get the next run_id for a community.
 
     Args:
         conn: Database connection
-        cache_dir: Path to cache directory containing interaction files
+        community_id: Community identifier
+
+    Returns:
+        int: The next run_id for this community (1 if no runs exist)
     """
-    print("📦 Importing interactions...")
-
-    cache_path = Path(cache_dir)
-    csv_files = list(cache_path.glob("interactions_*.csv"))
-
-    if not csv_files:
-        print(f"  ⚠️  No interaction files found in {cache_dir}")
-        return
-
-    # Truncate the table first
-    try:
-        with conn.cursor() as cur:
-            print("  🗑️  Truncating devrank.interactions...")
-            cur.execute("TRUNCATE TABLE devrank.interactions RESTART IDENTITY")
-        conn.commit()
-    except Exception as e:
-        print(f"  ❌ Error truncating table: {e}")
-        conn.rollback()
-        return
-
-    total_rows = 0
-
-    for csv_file in csv_files:
-        # Extract month and year from filename (e.g., interactions_01_2024.csv)
-        match = re.match(r"interactions_(\d{2})_(\d{4})\.csv", csv_file.name)
-        if not match:
-            print(f"  ⚠️  Skipping {csv_file}: unexpected filename format")
-            continue
-
-        month = int(match.group(1))
-        year = int(match.group(2))
-
-        print(f"  📄 Processing {csv_file.name} (month={month}, year={year})...")
-
-        try:
-            with open(csv_file, "r", newline="", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-
-                required_cols = ["user", "repo", "event_type", "event_count"]
-                if not all(col in reader.fieldnames for col in required_cols):
-                    print(f"    ⚠️  Skipping {csv_file}: missing required columns")
-                    continue
-
-                # Build CSV data in memory for COPY
-                buffer = io.StringIO()
-                row_count = 0
-                for row in reader:
-                    buffer.write(
-                        f"{row['user']}\t{row['repo']}\t{row['event_type']}\t{row['event_count']}\t{year}\t{month}\n"
-                    )
-                    row_count += 1
-
-                buffer.seek(0)
-
-                # Use COPY for fast bulk insert with fresh cursor
-                with conn.cursor() as cur:
-                    cur.copy_expert(
-                        "COPY devrank.interactions (user_login, repo, event_type, event_count, year, month) FROM STDIN",
-                        buffer,
-                    )
-
-            conn.commit()
-            total_rows += row_count
-            print(f"    ✅ Imported {row_count} rows")
-
-        except Exception as e:
-            print(f"    ❌ Error processing {csv_file}: {e}")
-            conn.rollback()
-
-    print(f"  ✅ Total interactions imported: {total_rows}")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COALESCE(MAX(run_id), 0) + 1
+            FROM devrank.runs
+            WHERE community_id = %s
+            """,
+            (community_id,),
+        )
+        return cur.fetchone()[0]
 
 
 def create_run(conn, community_id, ecosystems, days_back):
     """
     Create a new run entry in devrank.runs table.
+    run_id is unique per community, not globally.
 
     Args:
         conn: Database connection
@@ -273,29 +214,30 @@ def create_run(conn, community_id, ecosystems, days_back):
         days_back: Number of days back for the run
 
     Returns:
-        int: The created run_id
+        int: The created run_id (unique within this community)
     """
+    run_id = get_next_run_id(conn, community_id)
+
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO devrank.runs (community_id, ecosystems, days_back)
-            VALUES (%s, %s, %s)
-            RETURNING run_id
+            INSERT INTO devrank.runs (run_id, community_id, ecosystems, days_back)
+            VALUES (%s, %s, %s, %s)
             """,
-            (community_id, ecosystems, days_back),
+            (run_id, community_id, ecosystems, days_back),
         )
-        run_id = cur.fetchone()[0]
 
     conn.commit()
     return run_id
 
 
-def import_scores(conn, run_id, scores_file):
+def import_scores(conn, community_id, run_id, scores_file):
     """
     Import scores from a CSV file into devrank.scores table.
 
     Args:
         conn: Database connection
+        community_id: The community_id to associate scores with
         run_id: The run_id to associate scores with
         scores_file: Path to the scores CSV file
     """
@@ -316,20 +258,20 @@ def import_scores(conn, run_id, scores_file):
 
             rows = []
             for row in reader:
-                rows.append((run_id, row["i"], float(row["v"])))
+                rows.append((community_id, run_id, row["i"], float(row["v"])))
 
-        with conn.cursor() as cur:
-            execute_values(
-                cur,
-                """
-                INSERT INTO devrank.scores (run_id, user_id, value)
-                VALUES %s
-                ON CONFLICT (run_id, user_id) DO UPDATE SET
-                    value = EXCLUDED.value
-                """,
-                rows,
-                page_size=10000,
-            )
+            with conn.cursor() as cur:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO devrank.scores (community_id, run_id, user_id, value)
+                    VALUES %s
+                    ON CONFLICT (community_id, run_id, user_id) DO UPDATE SET
+                        value = EXCLUDED.value
+                    """,
+                    rows,
+                    page_size=10000,
+                )
 
         conn.commit()
         print(f"  ✅ Imported {len(rows)} scores")
@@ -340,12 +282,13 @@ def import_scores(conn, run_id, scores_file):
         return 0
 
 
-def import_seeds(conn, run_id, seed_file):
+def import_seeds(conn, community_id, run_id, seed_file):
     """
     Import seeds from a CSV file into devrank.seeds table.
 
     Args:
         conn: Database connection
+        community_id: The community_id to associate seeds with
         run_id: The run_id to associate seeds with
         seed_file: Path to the seed CSV file
     """
@@ -366,20 +309,20 @@ def import_seeds(conn, run_id, seed_file):
 
             rows = []
             for row in reader:
-                rows.append((run_id, row["i"], float(row["v"])))
+                rows.append((community_id, run_id, row["i"], float(row["v"])))
 
-        with conn.cursor() as cur:
-            execute_values(
-                cur,
-                """
-                INSERT INTO devrank.seeds (run_id, user_id, value)
-                VALUES %s
-                ON CONFLICT (run_id, user_id) DO UPDATE SET
-                    value = EXCLUDED.value
-                """,
-                rows,
-                page_size=10000,
-            )
+            with conn.cursor() as cur:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO devrank.seeds (community_id, run_id, user_id, value)
+                    VALUES %s
+                    ON CONFLICT (community_id, run_id, user_id) DO UPDATE SET
+                        value = EXCLUDED.value
+                    """,
+                    rows,
+                    page_size=10000,
+                )
 
         conn.commit()
         print(f"  ✅ Imported {len(rows)} seeds")
@@ -420,8 +363,8 @@ def import_run(conn, community_id, days_back, config):
     scores_file = base_dir / "scores" / f"{community_id}.csv"
     seed_file = base_dir / "seed" / f"{community_id}.csv"
 
-    scores_count = import_scores(conn, run_id, scores_file)
-    seeds_count = import_seeds(conn, run_id, seed_file)
+    scores_count = import_scores(conn, community_id, run_id, scores_file)
+    seeds_count = import_seeds(conn, community_id, run_id, seed_file)
 
     print(f"  📊 Run summary: {scores_count} scores, {seeds_count} seeds")
     return run_id
@@ -461,7 +404,6 @@ def main():
 Examples:
   python import_to_db.py --all --days-back 365
   python import_to_db.py --ecosystems
-  python import_to_db.py --interactions
   python import_to_db.py --run bitcoin --days-back 180
 
 Environment variables:
@@ -483,12 +425,6 @@ Environment variables:
     )
 
     parser.add_argument(
-        "--interactions",
-        action="store_true",
-        help="Import interaction data only",
-    )
-
-    parser.add_argument(
         "--run",
         type=str,
         metavar="COMMUNITY_ID",
@@ -505,7 +441,7 @@ Environment variables:
     args = parser.parse_args()
 
     # Default to --all if no options specified
-    if not any([args.all, args.ecosystems, args.interactions, args.run]):
+    if not any([args.all, args.ecosystems, args.run]):
         args.all = True
 
     # Load configuration
@@ -531,15 +467,10 @@ Environment variables:
             # Import everything
             import_ecosystems(conn, base_dir / "ecosystems")
             print()
-            import_interactions(conn, base_dir / "cache")
-            print()
             import_all_runs(conn, args.days_back, config)
         else:
             if args.ecosystems:
                 import_ecosystems(conn, base_dir / "ecosystems")
-
-            if args.interactions:
-                import_interactions(conn, base_dir / "cache")
 
             if args.run:
                 import_run(conn, args.run, args.days_back, config)

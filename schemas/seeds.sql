@@ -1,0 +1,32 @@
+-- PostgreSQL schema for seeds data
+-- Stores seed repository scores for each run
+-- Source files: seed/*.csv
+
+CREATE TABLE IF NOT EXISTS devrank.seeds (
+    id SERIAL PRIMARY KEY,
+    community_id TEXT NOT NULL,
+    run_id INTEGER NOT NULL,
+    user_id VARCHAR(512) NOT NULL,
+    value DOUBLE PRECISION NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    -- Foreign key to runs table (composite key)
+    CONSTRAINT fk_seeds_run FOREIGN KEY (community_id, run_id)
+        REFERENCES devrank.runs(community_id, run_id) ON DELETE CASCADE,
+    -- Ensure unique combination of community_id, run_id and user_id
+    CONSTRAINT unique_seeds_community_run_user UNIQUE (community_id, run_id, user_id)
+);
+
+-- Index for faster lookups by community_id
+CREATE INDEX IF NOT EXISTS idx_seeds_community_id ON devrank.seeds(community_id);
+
+-- Index for filtering by run_id
+CREATE INDEX IF NOT EXISTS idx_seeds_run_id ON devrank.seeds(run_id);
+
+-- Index for user_id lookups
+CREATE INDEX IF NOT EXISTS idx_seeds_user_id ON devrank.seeds(user_id);
+
+-- Index for value-based sorting/filtering
+CREATE INDEX IF NOT EXISTS idx_seeds_value ON devrank.seeds(value DESC);
+
+-- Composite index for community_id and run_id lookups
+CREATE INDEX IF NOT EXISTS idx_seeds_community_run ON devrank.seeds(community_id, run_id);

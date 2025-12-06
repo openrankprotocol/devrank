@@ -1,5 +1,6 @@
--- PostgreSQL schema for cache/interactions data
+-- PostgreSQL schema for cache/interactions data with indexes
 -- Source files: cache/interactions_MM_YYYY.csv
+-- Use this schema after bulk loading data for better query performance
 
 CREATE TABLE IF NOT EXISTS devrank.interactions (
     id SERIAL PRIMARY KEY,
@@ -8,22 +9,5 @@ CREATE TABLE IF NOT EXISTS devrank.interactions (
     event_type VARCHAR(50) NOT NULL,
     event_count INTEGER NOT NULL DEFAULT 0,
     year INTEGER NOT NULL,
-    month INTEGER NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    month INTEGER NOT NULL
 );
-
--- Indexes for common query patterns
-CREATE INDEX IF NOT EXISTS idx_interactions_user_login ON devrank.interactions(user_login);
-CREATE INDEX IF NOT EXISTS idx_interactions_repo ON devrank.interactions(repo);
-CREATE INDEX IF NOT EXISTS idx_interactions_event_type ON devrank.interactions(event_type);
-CREATE INDEX IF NOT EXISTS idx_interactions_year_month ON devrank.interactions(year, month);
-CREATE INDEX IF NOT EXISTS idx_interactions_user_repo ON devrank.interactions(user_login, repo);
-
--- Unique constraint to prevent duplicate entries
-CREATE UNIQUE INDEX IF NOT EXISTS idx_interactions_unique
-    ON devrank.interactions(user_login, repo, event_type, year, month);
-
--- Event type enum for validation (optional, can be used as CHECK constraint)
--- Known event types: ISSUE_OPENED, COMMIT_CODE, ISSUE_COMMENTED, ISSUE_CLOSED,
---                    PULL_REQUEST_MERGED, STARRED, etc.
